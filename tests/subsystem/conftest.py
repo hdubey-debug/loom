@@ -35,18 +35,16 @@ labels for filtering, not skip filters.
 from __future__ import annotations
 
 import json
-import os
 import signal
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, List, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import pytest
 
 from loom.adapters import agent_from_send, agent_from_stream
 from loom.contracts import ConversationPolicy
-from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.events import Event
 from loom.kernel.journal import Journal

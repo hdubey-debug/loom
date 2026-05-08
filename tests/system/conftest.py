@@ -17,31 +17,20 @@ Stdlib only — no pytest-timeout / no hypothesis.
 from __future__ import annotations
 
 import json
-import queue
 import signal
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import pytest
 
-from loom.adapters import agent_from_send, agent_from_stream
+from loom.adapters import agent_from_send
 from loom.contracts import ConversationPolicy
-from loom.kernel import events as ev
-from loom.kernel.bus import MessageBus
 from loom.kernel.events import Event
 from loom.kernel.journal import Journal
-from loom.kernel.obligations import (
-    UserTurnPlan,
-    plan_for_acknowledgement,
-    plan_for_default,
-)
 from loom.kernel.room import RoomConfig
-from loom.policy.default import DefaultPolicy
 from loom.policy.open_chat import OpenChatPolicy
-from loom.policy.round_robin import RoundRobinPolicy
-from loom.policy.single_responder import SingleResponderPolicy
 from loom.room import LoomRoom
 
 # Re-export the adversarial / fault primitives from the subsystem tier so

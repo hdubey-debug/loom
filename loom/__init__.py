@@ -1,4 +1,4 @@
-"""Loom — Loom.
+"""Loom.
 
 Role-symmetric, streaming, event-sourced room protocol for LLM agents.
 Loom is a kernel — anyone can build chatrooms (debate, classroom,

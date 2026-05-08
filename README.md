@@ -1,4 +1,19 @@
-# Loom
+<div align="center">
+
+# 🪡 Loom
+
+**A small, opinionated kernel for multi-agent LLM chatrooms.**
+_Race-free turn taking. Pluggable policies. Bring your own LLM SDK._
+
+[![CI](https://github.com/hdubey-debug/loom/actions/workflows/ci.yml/badge.svg)](https://github.com/hdubey-debug/loom/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000)](https://github.com/astral-sh/ruff)
+[![Tests](https://img.shields.io/badge/tests-1170%2B-success)](#)
+
+</div>
+
+<!-- DEMO GIF: docs/demo.gif (placeholder — record after a public release) -->
 
 Loom is a small library for building multi-agent chatrooms. You provide
 a list of agents and (optionally) a routing policy; Loom runs the room.
@@ -6,10 +21,30 @@ Race conditions, cursor drift, obligation tracking, mention routing,
 prompt sandboxing, and streaming consolidation are the kernel's job —
 not yours.
 
-It's the substrate behind [Weave](https://github.com/your-org/weave),
-the terminal multi-agent console. Loom is intended to be reusable for
+It's the substrate behind [Weave](https://github.com/hdubey-debug/weave),
+a terminal multi-agent console. Loom is intended to be reusable for
 any LLM-driven chatroom: debate, classroom, 20-questions, a synthesis
 council over a corpus, a peer review pair, or whatever else.
+
+## Why Loom?
+
+Most multi-agent code dies in three places: the cursor race when two
+agents wake at once, mention parsing that quietly drops valid
+addresses, and policy logic tangled with bus posting until nothing is
+safe to change. Loom makes those three things the kernel's job and
+gives policies one tiny pure callback (`plan_user_turn`). The result:
+~5k LOC, 1170+ tests, and a public surface you can read in an hour.
+
+| | Loom | LangGraph | AutoGen | crewAI |
+|---|---|---|---|---|
+| **Scope** | Kernel only | Framework | Framework | Framework |
+| **LLM coupling** | Bring your own SDK | Provider-agnostic | Provider-agnostic | OpenAI-first |
+| **Race-safe turn taking** | ✅ obligation + lease | DAG-level | n/a | n/a |
+| **Policy as pure callback** | ✅ enforced via boundary test | partial | n/a | n/a |
+| **Streaming** | ✅ delta-merged | ✅ | partial | ✅ |
+| **Built-in journal** | ✅ append-only `events.jsonl` | partial | ❌ | ❌ |
+
+_Numbers are approximate; corrections welcome via issue or PR._
 
 ## 30-second start
 
@@ -49,6 +84,20 @@ with room:
 
 ## Mental model
 
+```mermaid
+flowchart TD
+    User[User / prompt_fn] -->|post| Room[LoomRoom facade]
+    Room --> Session[LoomSession]
+    Session --> Kernel[Kernel<br/>bus · coordinator · state]
+    Session --> Policy[Policy<br/>plan_user_turn]
+    Session --> Agents[Agents<br/>your LLM clients]
+    Kernel <-->|state read| Policy
+    Kernel <-->|stream| Agents
+```
+
+<details>
+<summary>ASCII fallback</summary>
+
 ```
 +---------------------------------------------------------------+
 | LoomRoom (facade)                                              |
@@ -68,6 +117,8 @@ with room:
        |  state) |
        +---------+
 ```
+
+</details>
 
 - **Agents** wrap your LLM calls. Use the bundled adapters
   (`agent_from_send` / `agent_from_stream` / `agent_from_object`) or
@@ -293,6 +344,39 @@ implementation detail and may shift between minor versions.
   is on the v0.2 list.
 - No standalone PyPI package. Install in-place from source.
 
+## Examples
+
+The [`examples/`](examples/) directory has runnable scripts:
+
+| File | What it shows |
+|---|---|
+| [`two_agents.py`](examples/two_agents.py) | Two scripted agents on `OpenChatPolicy`. No API key needed. |
+| [`openai_two_agents.py`](examples/openai_two_agents.py) | Two real OpenAI-backed agents on `OpenChatPolicy`. Requires `OPENAI_API_KEY`. |
+| [`round_robin_classroom.py`](examples/round_robin_classroom.py) | Three scripted agents on `RoundRobinPolicy` with a teacher/student handoff. |
+| [`single_responder_qa.py`](examples/single_responder_qa.py) | One agent on `SingleResponderPolicy`. The minimal Q&A skeleton. |
+
+Run any of them straight from the repo root after `pip install -e .`:
+
+```bash
+python examples/two_agents.py
+```
+
+## Roadmap
+
+The "v0 limitations" above are the v0.2 work list:
+
+- Async / off-lock policies for slow planning logic.
+- Policy-state snapshot/restore lifecycle hooks.
+- Automatic restart-recovery wiring from the journal.
+- Deep-frozen `RoomStateView` to remove leaf-level mutation paths.
+- Per-message rate limiting + per-participant cost budgets in the
+  public API.
+- Standalone PyPI package.
+
 ## License
 
-See the project root.
+[MIT](LICENSE) — © 2026 Harsh Dubey.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for release notes,
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for setup + the policy contract,
+and [`docs/`](docs/) for tutorials.

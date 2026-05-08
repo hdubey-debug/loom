@@ -5,7 +5,6 @@ import unittest
 
 from loom.kernel import events as ev
 from loom.kernel.actor import (
-    AgentDecision,
     ParticipantActor,
     _trigger_priority,
     decide,

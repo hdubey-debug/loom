@@ -15,10 +15,8 @@ import time
 import pytest
 
 from loom.adapters import agent_from_send
-from loom.kernel.events import Event
 from loom.kernel.journal import Journal
 from loom.policy.open_chat import OpenChatPolicy
-from loom.policy.single_responder import SingleResponderPolicy
 from loom.room import LoomRoom
 
 

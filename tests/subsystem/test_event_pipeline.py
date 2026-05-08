@@ -14,10 +14,7 @@ all tests run by default. The 45 s autouse watchdog caps every test.
 """
 from __future__ import annotations
 
-import statistics
-import threading
 import time
-from pathlib import Path
 
 import pytest
 
@@ -26,7 +23,6 @@ from loom.kernel.bus import MessageBus
 from loom.kernel.coordinator import RoomCoordinator
 from loom.kernel.journal import (
     Journal,
-    SNAPSHOT_VERSION,
     restore_state,
 )
 from loom.kernel.room import (
@@ -61,7 +57,7 @@ class TestBusOrderingUnderLoad:
                 bus.post(ev.chat(sender="user", body="x"))
 
         for _ in range(n_posters):
-            thread_harness.spawn(poster, name=f"poster")
+            thread_harness.spawn(poster, name="poster")
         thread_harness.join_all(timeout=10.0)
         assert thread_harness.errors == []
 

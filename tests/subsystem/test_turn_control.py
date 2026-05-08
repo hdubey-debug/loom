@@ -7,7 +7,6 @@ the user-turn debounce window.
 """
 from __future__ import annotations
 
-import threading
 import time
 
 import pytest
@@ -364,7 +363,6 @@ class TestDebounceWindow:
     def test_post_within_default_debounce_merges(self):
         # With debounce=200ms, two posts in rapid succession should
         # land on the same active turn (the second is debounced).
-        from loom.kernel.obligations import plan_for_acknowledgement
         cfg = RoomConfig(user_turn_debounce_ms=2000)  # generous window
         bus, state, c = _build(default_responder="loom", config=cfg)
 

@@ -14,12 +14,9 @@ from __future__ import annotations
 import io
 import unittest
 from contextlib import redirect_stdout
-from typing import Iterator
 
 from loom.adapters import agent_from_send, agent_from_stream
 from loom.contracts import ConversationPolicy
-from loom.kernel.events import Event
-from loom.kernel.obligations import plan_for_acknowledgement
 from loom.policy.open_chat import OpenChatPolicy
 from loom.policy.single_responder import SingleResponderPolicy
 from loom.room import LoomRoom, _agent_to_wiring

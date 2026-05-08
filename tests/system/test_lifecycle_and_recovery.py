@@ -11,13 +11,10 @@ multi-process consumer would hit on resume.
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
-from loom.adapters import agent_from_send
-from loom.kernel.journal import Journal, restore_state
-from loom.kernel.room import RoomConfig
+from loom.kernel.journal import Journal
 from loom.policy.open_chat import OpenChatPolicy
 from loom.policy.round_robin import RoundRobinPolicy
 from loom.policy.single_responder import SingleResponderPolicy

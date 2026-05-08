@@ -9,7 +9,6 @@ guarantee.
 """
 from __future__ import annotations
 
-import threading
 import time
 
 import pytest
@@ -23,7 +22,6 @@ from loom.policy.default import DefaultPolicy
 from loom.policy.open_chat import OpenChatPolicy
 from loom.policy.round_robin import RoundRobinPolicy
 from loom.policy.single_responder import SingleResponderPolicy
-from loom.room import LoomRoom
 
 
 # Shared long-text helper — bypasses both the pass buffer and the loop

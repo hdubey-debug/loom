@@ -14,7 +14,7 @@ satisfying it from ordinary ``send`` / ``stream`` callables.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterator, Optional, Protocol, runtime_checkable
+from typing import Iterator, Protocol, runtime_checkable
 
 from loom.kernel.events import Event
 from loom.kernel.obligations import UserTurnPlan

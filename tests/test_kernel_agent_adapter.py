@@ -12,7 +12,6 @@ from types import SimpleNamespace
 
 from loom.adapters import (
     _extract_text,
-    _FunctionAgent,
     agent_from_object,
     agent_from_send,
     agent_from_stream,

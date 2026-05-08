@@ -12,13 +12,6 @@ import pytest
 
 from loom.adapters import agent_from_send
 from loom.contracts import ConversationPolicy
-from loom.kernel.events import Event
-from loom.kernel.obligations import (
-    UserTurnPlan,
-    plan_for_acknowledgement,
-    plan_for_default,
-    plan_with_required,
-)
 from loom.kernel.room import (
     ParticipantInfo,
     RoomConfig,

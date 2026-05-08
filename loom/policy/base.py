@@ -42,7 +42,6 @@ Hook overview (override what you need):
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Optional
 
 from loom.contracts import ConversationPolicy
 from loom.kernel import obligations as obl

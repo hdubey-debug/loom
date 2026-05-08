@@ -4,13 +4,11 @@ from __future__ import annotations
 import unittest
 
 from loom.kernel.obligations import (
-    ResponseObligation,
     UserTurnPlan,
     plan_for_acknowledgement,
     plan_with_required,
 )
 from loom.kernel.user_turn import (
-    UserTurn,
     is_user_turn_complete,
     make_user_turn,
     participant_is_eligible,

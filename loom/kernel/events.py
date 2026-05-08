@@ -42,7 +42,7 @@ _VALID_KINDS = frozenset({
 })
 
 
-from loom.errors import LoomError
+from loom.errors import LoomError  # noqa: E402  (kept here to avoid circular import at module-load)
 
 
 class EventShapeError(LoomError, ValueError):

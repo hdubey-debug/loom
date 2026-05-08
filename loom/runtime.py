@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
+from typing import Callable, Optional
 import re
 import threading
 
-from loom.adapters import SendProxyAdapter
+from loom.adapters import SendProxyAdapter  # noqa: F401  (re-export)
 from loom.contracts import ConversationPolicy
 from loom.kernel import events as ev
 from loom.kernel.actor import ParticipantActor

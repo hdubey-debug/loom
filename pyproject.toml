@@ -5,10 +5,32 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "loom"
 version = "0.1.2"
-description = "Loom — kernel library for multi-agent chatrooms"
+description = "Loom — kernel library for multi-agent LLM chatrooms"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Harsh Dubey" }]
+keywords = ["llm", "agents", "multi-agent", "chatroom", "kernel", "orchestration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Homepage      = "https://github.com/hdubey-debug/loom"
+Repository    = "https://github.com/hdubey-debug/loom"
+Issues        = "https://github.com/hdubey-debug/loom/issues"
+Changelog     = "https://github.com/hdubey-debug/loom/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/hdubey-debug/loom/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [
@@ -49,6 +71,15 @@ markers = [
     "slow: > 5s wall-clock",
     "perf: opt-in microbench; excluded from default suite (run via make bench)",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are allowed to assign-and-not-use (intentional snapshots in race
+# probes), reuse short loop names, and import a few helpers eagerly.
+"tests/**/*.py" = ["F841", "E741", "F541"]
 
 [tool.coverage.run]
 source = ["loom"]

@@ -11,7 +11,6 @@ from loom.kernel.coordinator import (
     LoopGuardConfig,
     RoomCoordinator,
     ThrottleConfig,
-    TurnLease,
 )
 from loom.kernel.obligations import (
     plan_for_acknowledgement,

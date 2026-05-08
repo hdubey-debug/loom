@@ -14,9 +14,8 @@ from contextlib import redirect_stdout
 import pytest
 
 from loom.adapters import agent_from_send
-from loom.kernel import events as ev
 from loom.kernel.journal import Journal, restore_state
-from loom.kernel.room import RoomConfig, RoomState
+from loom.kernel.room import RoomConfig
 from loom.policy.open_chat import OpenChatPolicy
 from loom.policy.single_responder import SingleResponderPolicy
 from loom.room import LoomRoom

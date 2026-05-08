@@ -17,7 +17,6 @@ from loom.adapters import agent_from_send, agent_from_stream
 from loom.policy.default import DefaultPolicy
 from loom.policy.open_chat import OpenChatPolicy
 from loom.policy.round_robin import RoundRobinPolicy
-from loom.policy.single_responder import SingleResponderPolicy
 from loom.room import LoomRoom
 
 

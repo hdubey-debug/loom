@@ -11,17 +11,13 @@ from __future__ import annotations
 
 import re
 import threading
-import time
 from pathlib import Path
 
 import pytest
 
-from loom.adapters import agent_from_send
-from loom.contracts import ConversationPolicy
 from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.coordinator import RoomCoordinator
-from loom.kernel.obligations import plan_for_acknowledgement
 from loom.kernel.prompt import LOOM_PROTOCOL_INSTRUCTIONS, build_prompt
 from loom.kernel.room import (
     ParticipantInfo,
@@ -30,7 +26,6 @@ from loom.kernel.room import (
 )
 from loom.policy.default import DefaultPolicy
 from loom.policy.open_chat import OpenChatPolicy
-from loom.room import LoomRoom
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

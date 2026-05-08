@@ -10,19 +10,11 @@ events in their proper context inside an assembled session.
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
 from loom.adapters import agent_from_send
-from loom.contracts import ConversationPolicy
-from loom.kernel import events as ev
 from loom.kernel.events import Event
-from loom.kernel.obligations import (
-    plan_for_acknowledgement,
-    plan_for_default,
-    plan_with_required,
-)
 from loom.policy.open_chat import OpenChatPolicy
 from loom.room import LoomRoom
 
