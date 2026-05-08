@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+build/
+dist/
+venv/
+.venv/
+.coverage
+.coverage.*
+htmlcov/
+/tmp/.coverage_loom
+mutants/

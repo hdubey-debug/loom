@@ -1,0 +1,41 @@
+Loom Mutation Testing Baseline
+==============================
+
+Pilot run captured 2026-05-08. See docs/mutation-survivors.md for triage.
+
+Pilot scope: loom/policy/open_chat.py only (smallest module)
+- Mutants generated:  39
+- Killed:             17  (43.6%)
+- Survived:           22  (56.4%)
+- Timed out:           0
+- Suspicious:          0
+- Throughput:         97 mut/s
+
+The pilot confirms the harness is wired correctly. The 22 surviving
+mutants on `open_chat.py` are an early signal: many of the policy
+helper's branches don't have assertion-rich tests yet. Triage of the
+full kernel + policy baseline (loom/kernel/, loom/policy/, loom/adapters.py
+combined) is run via:
+
+    make test-full      # ~1.5–2h on a quiescent box
+
+Results are written to docs/mutation-baseline.txt (overwriting this
+file). After the first full baseline lands, `scripts/run_full_quality.sh`
+diffs new survivors against this captured set and fails when
+unaccounted-for survivors appear.
+
+Acceptance threshold: ≥ 90% kill rate on loom/kernel/ + loom/policy/.
+The pilot's 43.6% on open_chat.py is below this threshold and indicates
+real test gaps that the next assertion-strengthening pass should close
+before the kernel goes public.
+
+To inspect a specific surviving mutant:
+
+    ./venv/bin/mutmut show loom.policy.open_chat.xǁOpenChatPolicyǁplan_user_turn__mutmut_7
+
+To kill a survivor by adding a unit test:
+    1. Read the mutant body (mutmut show ID).
+    2. Identify the assertion that would have caught it.
+    3. Add a regression test in tests/test_kernel_<module>.py.
+    4. Re-run `mutmut run --paths-to-mutate=<one_file>` to verify the
+       kill (much faster than the full suite).

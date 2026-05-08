@@ -1,0 +1,26 @@
+Name                             Stmts   Miss Branch BrPart  Cover
+------------------------------------------------------------------
+loom/__init__.py                     10      0      0      0   100%
+loom/adapters.py                     75      0     38      0   100%
+loom/contracts.py                    17      0      0      0   100%
+loom/kernel/__init__.py               0      0      0      0   100%
+loom/kernel/actor.py                162      6     66      3    96%
+loom/kernel/addressees.py            24      0     10      0   100%
+loom/kernel/bus.py                   72      0     16      0   100%
+loom/kernel/coordinator.py          451      6    206     14    97%
+loom/kernel/events.py               101      0     22      0   100%
+loom/kernel/journal.py              207      0     56      1    99%
+loom/kernel/obligations.py           52      0     10      0   100%
+loom/kernel/prompt.py               140      0     66      3    99%
+loom/kernel/room.py                 189      1     40      3    98%
+loom/kernel/streaming.py             95      1     32      1    98%
+loom/kernel/user_turn.py             95      0     26      0   100%
+loom/policy/__init__.py               5      0      0      0   100%
+loom/policy/default.py              152      0     68      0   100%
+loom/policy/open_chat.py             15      0      2      0   100%
+loom/policy/round_robin.py           52      0     20      0   100%
+loom/policy/single_responder.py      19      0      4      0   100%
+loom/room.py                        133      5     44      6    94%
+loom/runtime.py                     397      1    194      3    99%
+------------------------------------------------------------------
+TOTAL                             2463     20    920     34    98%

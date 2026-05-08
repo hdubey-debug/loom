@@ -1,0 +1,467 @@
+{
+  "host": {
+    "platform": "Linux-5.14.0-284.11.1.el9_2.x86_64-x86_64-with-glibc2.34",
+    "python": "3.12.7",
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "cpu_count_logical": 48,
+    "cpu_count_physical": 48,
+    "mem_total_bytes": 269886623744,
+    "mem_available_bytes": 173174403072
+  },
+  "ts": "2026-05-08T06:14:36Z",
+  "git_rev": "pre-phase-1+2-merged",
+  "scenarios": {
+    "micro": {
+      "bus.post / 0 sub": {
+        "name": "bus.post / 0 sub",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 349881.0,
+        "p99_ns": 377831.0,
+        "mean_ns": 352547.63666666666,
+        "min_ns": 342769.0,
+        "extras": {}
+      },
+      "bus.post / 1 sub": {
+        "name": "bus.post / 1 sub",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 367407.0,
+        "p99_ns": 390836.0,
+        "mean_ns": 369231.64,
+        "min_ns": 358969.0,
+        "extras": {}
+      },
+      "Event.to_jsonl chat": {
+        "name": "Event.to_jsonl chat",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 1437052.5,
+        "p99_ns": 1457088.0,
+        "mean_ns": 1437479.0166666666,
+        "min_ns": 1422966.0,
+        "extras": {}
+      },
+      "Event.to_jsonl control": {
+        "name": "Event.to_jsonl control",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 2166793.5,
+        "p99_ns": 2200174.0,
+        "mean_ns": 2168825.5566666666,
+        "min_ns": 2151996.0,
+        "extras": {}
+      },
+      "obligation_for hit N=5": {
+        "name": "obligation_for hit N=5",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 37229.5,
+        "p99_ns": 41021.0,
+        "mean_ns": 37386.21333333333,
+        "min_ns": 36822.0,
+        "extras": {}
+      },
+      "obligation_for miss N=5": {
+        "name": "obligation_for miss N=5",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 39710.0,
+        "p99_ns": 43415.0,
+        "mean_ns": 39849.35333333333,
+        "min_ns": 39380.0,
+        "extras": {}
+      },
+      "obligation_for hit N=25": {
+        "name": "obligation_for hit N=25",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 75497.0,
+        "p99_ns": 79304.0,
+        "mean_ns": 75738.56,
+        "min_ns": 74821.0,
+        "extras": {}
+      },
+      "obligation_for miss N=25": {
+        "name": "obligation_for miss N=25",
+        "iters": 300,
+        "inner": 200,
+        "p50_ns": 117769.5,
+        "p99_ns": 121849.0,
+        "mean_ns": 118128.15333333334,
+        "min_ns": 117186.0,
+        "extras": {}
+      },
+      "actor._lookup_event-style E=1000": {
+        "name": "actor._lookup_event-style E=1000",
+        "iters": 100,
+        "inner": 10,
+        "p50_ns": 29247.5,
+        "p99_ns": 32520.0,
+        "mean_ns": 29371.63,
+        "min_ns": 29002.0,
+        "extras": {}
+      },
+      "actor._lookup_event-style E=10000": {
+        "name": "actor._lookup_event-style E=10000",
+        "iters": 100,
+        "inner": 10,
+        "p50_ns": 249853.5,
+        "p99_ns": 253790.0,
+        "mean_ns": 249992.83,
+        "min_ns": 246877.0,
+        "extras": {}
+      },
+      "_find_recent_chat_event_id E=1000": {
+        "name": "_find_recent_chat_event_id E=1000",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 292504.5,
+        "p99_ns": 297287.0,
+        "mean_ns": 292753.56,
+        "min_ns": 289743.0,
+        "extras": {}
+      },
+      "_find_recent_chat_event_id E=10000": {
+        "name": "_find_recent_chat_event_id E=10000",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 2803288.5,
+        "p99_ns": 2818770.0,
+        "mean_ns": 2810266.22,
+        "min_ns": 2786985.0,
+        "extras": {}
+      }
+    },
+    "burst": {
+      "sustained-post no-sub N=1000": {
+        "name": "sustained-post no-sub N=1000",
+        "iters": 1,
+        "inner": 1000,
+        "p50_ns": 1977363,
+        "p99_ns": 1977363,
+        "mean_ns": 1977363,
+        "min_ns": 1977363,
+        "extras": {
+          "per_op_ns": 1977.363,
+          "events": 1000
+        }
+      },
+      "sustained-post 1-sub N=1000": {
+        "name": "sustained-post 1-sub N=1000",
+        "iters": 1,
+        "inner": 1000,
+        "p50_ns": 1906001,
+        "p99_ns": 1906001,
+        "mean_ns": 1906001,
+        "min_ns": 1906001,
+        "extras": {
+          "per_op_ns": 1906.001,
+          "events": 1000
+        }
+      }
+    },
+    "history": {
+      "snapshot full E=100": {
+        "name": "snapshot full E=100",
+        "iters": 100,
+        "inner": 1,
+        "p50_ns": 839.5,
+        "p99_ns": 1259.0,
+        "mean_ns": 856.44,
+        "min_ns": 804.0,
+        "extras": {}
+      },
+      "snapshot audience=bob E=100": {
+        "name": "snapshot audience=bob E=100",
+        "iters": 100,
+        "inner": 1,
+        "p50_ns": 7341.0,
+        "p99_ns": 8417.0,
+        "mean_ns": 7401.27,
+        "min_ns": 7167.0,
+        "extras": {}
+      },
+      "snapshot full E=1000": {
+        "name": "snapshot full E=1000",
+        "iters": 100,
+        "inner": 1,
+        "p50_ns": 3019.5,
+        "p99_ns": 3231.0,
+        "mean_ns": 3023.37,
+        "min_ns": 2912.0,
+        "extras": {}
+      },
+      "snapshot audience=bob E=1000": {
+        "name": "snapshot audience=bob E=1000",
+        "iters": 100,
+        "inner": 1,
+        "p50_ns": 59340.5,
+        "p99_ns": 63633.0,
+        "mean_ns": 59518.22,
+        "min_ns": 58584.0,
+        "extras": {}
+      },
+      "snapshot full E=10000": {
+        "name": "snapshot full E=10000",
+        "iters": 100,
+        "inner": 1,
+        "p50_ns": 25092.0,
+        "p99_ns": 27746.0,
+        "mean_ns": 25015.26,
+        "min_ns": 24470.0,
+        "extras": {}
+      },
+      "snapshot audience=bob E=10000": {
+        "name": "snapshot audience=bob E=10000",
+        "iters": 100,
+        "inner": 1,
+        "p50_ns": 576381.0,
+        "p99_ns": 582735.0,
+        "mean_ns": 575975.74,
+        "min_ns": 569472.0,
+        "extras": {}
+      }
+    },
+    "cursor": {
+      "snapshot since=fresh E=1000 k=990": {
+        "name": "snapshot since=fresh E=1000 k=990",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 154529.5,
+        "p99_ns": 159454.0,
+        "mean_ns": 154987.54,
+        "min_ns": 153614.0,
+        "extras": {
+          "cursor": 990,
+          "log_size": 1000,
+          "tag": "fresh"
+        }
+      },
+      "snapshot since=tail E=1000 k=500": {
+        "name": "snapshot since=tail E=1000 k=500",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 175772.5,
+        "p99_ns": 183100.0,
+        "mean_ns": 176406.3,
+        "min_ns": 174648.0,
+        "extras": {
+          "cursor": 500,
+          "log_size": 1000,
+          "tag": "tail"
+        }
+      },
+      "snapshot since=stale E=1000 k=100": {
+        "name": "snapshot since=stale E=1000 k=100",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 179169.5,
+        "p99_ns": 183052.0,
+        "mean_ns": 179457.21,
+        "min_ns": 177793.0,
+        "extras": {
+          "cursor": 100,
+          "log_size": 1000,
+          "tag": "stale"
+        }
+      },
+      "snapshot since=fresh E=10000 k=9990": {
+        "name": "snapshot since=fresh E=10000 k=9990",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 1554820.0,
+        "p99_ns": 1568200.0,
+        "mean_ns": 1555208.04,
+        "min_ns": 1545005.0,
+        "extras": {
+          "cursor": 9990,
+          "log_size": 10000,
+          "tag": "fresh"
+        }
+      },
+      "snapshot since=tail E=10000 k=5000": {
+        "name": "snapshot since=tail E=10000 k=5000",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 1690597.0,
+        "p99_ns": 1699556.0,
+        "mean_ns": 1690861.25,
+        "min_ns": 1683879.0,
+        "extras": {
+          "cursor": 5000,
+          "log_size": 10000,
+          "tag": "tail"
+        }
+      },
+      "snapshot since=stale E=10000 k=1000": {
+        "name": "snapshot since=stale E=10000 k=1000",
+        "iters": 100,
+        "inner": 5,
+        "p50_ns": 1766271.0,
+        "p99_ns": 1773977.0,
+        "mean_ns": 1765881.08,
+        "min_ns": 1755643.0,
+        "extras": {
+          "cursor": 1000,
+          "log_size": 10000,
+          "tag": "stale"
+        }
+      }
+    },
+    "journal": {
+      "Journal.load_events E=100": {
+        "name": "Journal.load_events E=100",
+        "iters": 10,
+        "inner": 1,
+        "p50_ns": 395644.5,
+        "p99_ns": 399115.0,
+        "mean_ns": 395874.4,
+        "min_ns": 389317.0,
+        "extras": {}
+      },
+      "Journal.load_events peak_bytes E=100": {
+        "name": "Journal.load_events peak_bytes E=100",
+        "iters": 1,
+        "inner": 1,
+        "p50_ns": 0.0,
+        "p99_ns": 0.0,
+        "mean_ns": 0.0,
+        "min_ns": 0.0,
+        "extras": {
+          "peak_bytes": 64110
+        }
+      },
+      "Journal.load_events E=1000": {
+        "name": "Journal.load_events E=1000",
+        "iters": 10,
+        "inner": 1,
+        "p50_ns": 3854781.5,
+        "p99_ns": 3924228.0,
+        "mean_ns": 3871155.7,
+        "min_ns": 3834556.0,
+        "extras": {}
+      },
+      "Journal.load_events peak_bytes E=1000": {
+        "name": "Journal.load_events peak_bytes E=1000",
+        "iters": 1,
+        "inner": 1,
+        "p50_ns": 0.0,
+        "p99_ns": 0.0,
+        "mean_ns": 0.0,
+        "min_ns": 0.0,
+        "extras": {
+          "peak_bytes": 524383
+        }
+      }
+    },
+    "stream": {
+      "stream_delta post-rate 1-sub N=1000": {
+        "name": "stream_delta post-rate 1-sub N=1000",
+        "iters": 1,
+        "inner": 1000,
+        "p50_ns": 1617815,
+        "p99_ns": 1617815,
+        "mean_ns": 1617815,
+        "min_ns": 1617815,
+        "extras": {
+          "per_op_ns": 1617.815,
+          "events": 1000,
+          "throughput_per_s": 618117.6463316262
+        }
+      }
+    },
+    "chat": {
+      "OpenChat turn N_agents=1": {
+        "name": "OpenChat turn N_agents=1",
+        "iters": 5,
+        "inner": 1,
+        "p50_ns": 5415641.0,
+        "p99_ns": 5438129.0,
+        "mean_ns": 5413915.2,
+        "min_ns": 5375660.0,
+        "extras": {
+          "policy": "OpenChat",
+          "n_agents": 1,
+          "turns": 5
+        }
+      },
+      "OpenChat turn N_agents=5": {
+        "name": "OpenChat turn N_agents=5",
+        "iters": 5,
+        "inner": 1,
+        "p50_ns": 3562022.0,
+        "p99_ns": 3730367.0,
+        "mean_ns": 3315240.6,
+        "min_ns": 2312326.0,
+        "extras": {
+          "policy": "OpenChat",
+          "n_agents": 5,
+          "turns": 5
+        }
+      },
+      "OpenChat turn N_agents=10": {
+        "name": "OpenChat turn N_agents=10",
+        "iters": 5,
+        "inner": 1,
+        "p50_ns": 7856218.0,
+        "p99_ns": 8518994.0,
+        "mean_ns": 7721637.6,
+        "min_ns": 5953982.0,
+        "extras": {
+          "policy": "OpenChat",
+          "n_agents": 10,
+          "turns": 5
+        }
+      }
+    },
+    "memory": {
+      "bytes_per_event chat-simple": {
+        "name": "bytes_per_event chat-simple",
+        "iters": 1,
+        "inner": 1000,
+        "p50_ns": 0.0,
+        "p99_ns": 0.0,
+        "mean_ns": 0.0,
+        "min_ns": 0.0,
+        "extras": {
+          "bytes_per_event": 297.288,
+          "alloc_total_bytes": 297288,
+          "n": 1000
+        }
+      },
+      "bytes_per_event chat-full": {
+        "name": "bytes_per_event chat-full",
+        "iters": 1,
+        "inner": 1000,
+        "p50_ns": 0.0,
+        "p99_ns": 0.0,
+        "mean_ns": 0.0,
+        "min_ns": 0.0,
+        "extras": {
+          "bytes_per_event": 417.288,
+          "alloc_total_bytes": 417288,
+          "n": 1000
+        }
+      },
+      "chat-session RSS slope turns=50": {
+        "name": "chat-session RSS slope turns=50",
+        "iters": 1,
+        "inner": 50,
+        "p50_ns": 0.0,
+        "p99_ns": 0.0,
+        "mean_ns": 0.0,
+        "min_ns": 0.0,
+        "extras": {
+          "rss_start_bytes": 20406272,
+          "rss_end_bytes": 20811776,
+          "rss_delta_bytes": 405504,
+          "rss_delta_per_turn": 8110.08,
+          "threads_start": 3,
+          "threads_end": 3
+        }
+      }
+    }
+  }
+}
