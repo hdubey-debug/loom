@@ -10,6 +10,7 @@ _Race-free turn taking. Pluggable policies. Bring your own LLM SDK._
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000)](https://github.com/astral-sh/ruff)
 [![Tests](https://img.shields.io/badge/tests-1170%2B-success)](#)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hdubey-debug/loom/blob/main/examples/colab_demo.ipynb)
 
 </div>
 
