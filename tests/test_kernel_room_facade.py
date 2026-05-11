@@ -9,6 +9,7 @@ Covers:
 - Stdlib-only defaults (``run_console`` does not require rich /
   prompt_toolkit).
 """
+
 from __future__ import annotations
 
 import io
@@ -22,12 +23,18 @@ from loom.policy.single_responder import SingleResponderPolicy
 from loom.room import LoomRoom, _agent_to_wiring
 
 
-def _agent(agent_id: str, response: str = "ok",
-           cost_tier: int = 1, persona: str = "",
-           capability_block: str = ""):
+def _agent(
+    agent_id: str,
+    response: str = "ok",
+    cost_tier: int = 1,
+    persona: str = "",
+    capability_block: str = "",
+):
     return agent_from_send(
-        agent_id, lambda p: response,
-        cost_tier=cost_tier, persona=persona,
+        agent_id,
+        lambda p: response,
+        cost_tier=cost_tier,
+        persona=persona,
         capability_block=capability_block,
     )
 
@@ -36,8 +43,8 @@ def _agent(agent_id: str, response: str = "ok",
 # Construction
 # ---------------------------------------------------------------------------
 
-class Construction(unittest.TestCase):
 
+class Construction(unittest.TestCase):
     def test_basic_room_construction(self):
         room = LoomRoom(agents=[_agent("a"), _agent("b")])
         try:
@@ -75,8 +82,7 @@ class Construction(unittest.TestCase):
         # Default ``policy_error_mode`` is ``"close_turn"``.
         room = LoomRoom(agents=[_agent("a")])
         try:
-            self.assertEqual(
-                room.session.coordinator.policy_error_mode, "close_turn")
+            self.assertEqual(room.session.coordinator.policy_error_mode, "close_turn")
         finally:
             room.stop()
 
@@ -86,17 +92,16 @@ class Construction(unittest.TestCase):
             policy_error_mode="default_responder",
         )
         try:
-            self.assertEqual(
-                room.session.coordinator.policy_error_mode,
-                "default_responder")
+            self.assertEqual(room.session.coordinator.policy_error_mode, "default_responder")
         finally:
             room.stop()
 
     def test_metadata_picked_up_from_agent(self):
-        room = LoomRoom(agents=[
-            _agent("a", cost_tier=5, persona="hello",
-                   capability_block="caps"),
-        ])
+        room = LoomRoom(
+            agents=[
+                _agent("a", cost_tier=5, persona="hello", capability_block="caps"),
+            ]
+        )
         try:
             wiring = room.session.wirings["a"]
             self.assertEqual(wiring.cost_tier, 5)
@@ -110,8 +115,8 @@ class Construction(unittest.TestCase):
 # Lifecycle
 # ---------------------------------------------------------------------------
 
-class Lifecycle(unittest.TestCase):
 
+class Lifecycle(unittest.TestCase):
     def test_start_starts_actors(self):
         room = LoomRoom(agents=[_agent("a")])
         try:
@@ -158,8 +163,7 @@ class Lifecycle(unittest.TestCase):
             eid = room.post("hello before start")
             self.assertGreaterEqual(eid, 0)
             chats = [
-                e for e in room.session.bus.snapshot()
-                if e.kind == "chat" and e.sender == "user"
+                e for e in room.session.bus.snapshot() if e.kind == "chat" and e.sender == "user"
             ]
             self.assertEqual(len(chats), 1)
             self.assertEqual(chats[0].body, "hello before start")
@@ -228,8 +232,8 @@ class Lifecycle(unittest.TestCase):
 # Posting
 # ---------------------------------------------------------------------------
 
-class Posting(unittest.TestCase):
 
+class Posting(unittest.TestCase):
     def test_post_returns_event_id(self):
         with LoomRoom(
             agents=[_agent("a"), _agent("b")],
@@ -248,8 +252,10 @@ class Posting(unittest.TestCase):
             room.stop()
 
     def test_post_and_wait_returns_replies(self):
-        long_a = "alpha replies with a sufficiently long answer to bypass " \
-                 "the loop guard's short-text duplicate detector."
+        long_a = (
+            "alpha replies with a sufficiently long answer to bypass "
+            "the loop guard's short-text duplicate detector."
+        )
         long_b = "bravo replies with a different long enough answer."
         with LoomRoom(
             agents=[_agent("a", long_a), _agent("b", long_b)],
@@ -282,8 +288,8 @@ class Posting(unittest.TestCase):
 # Membership
 # ---------------------------------------------------------------------------
 
-class DynamicMembership(unittest.TestCase):
 
+class DynamicMembership(unittest.TestCase):
     def test_add_agent_drafts_on_next_post(self):
         long_a = "alpha sufficient long reply that bypasses loop guard."
         long_b = "bravo sufficient long reply that bypasses loop guard."
@@ -318,11 +324,10 @@ class DynamicMembership(unittest.TestCase):
 # _agent_to_wiring
 # ---------------------------------------------------------------------------
 
-class AgentToWiring(unittest.TestCase):
 
+class AgentToWiring(unittest.TestCase):
     def test_stream_agent_passes_through(self):
-        agent = agent_from_stream(
-            "x", lambda p: ["hello"], persona="who")
+        agent = agent_from_stream("x", lambda p: ["hello"], persona="who")
         wiring = _agent_to_wiring(agent)
         self.assertEqual(wiring.id, "x")
         self.assertIs(wiring.proxy, agent)
@@ -375,6 +380,7 @@ class AgentToWiring(unittest.TestCase):
 # Run console
 # ---------------------------------------------------------------------------
 
+
 class RunConsole(unittest.TestCase):
     """Verifies :meth:`run_console` works without rich / prompt_toolkit."""
 
@@ -414,8 +420,8 @@ class RunConsole(unittest.TestCase):
 # Single-responder integration (small end-to-end)
 # ---------------------------------------------------------------------------
 
-class SingleResponderIntegration(unittest.TestCase):
 
+class SingleResponderIntegration(unittest.TestCase):
     def test_only_responder_drafts(self):
         long_a = "alpha sufficient long reply that bypasses loop guard."
         long_b = "bravo sufficient long reply that bypasses loop guard."
@@ -432,6 +438,7 @@ class SingleResponderIntegration(unittest.TestCase):
 # Throwing policy: fail-closed by default
 # ---------------------------------------------------------------------------
 
+
 class _ThrowingPolicy(ConversationPolicy):
     name = "thrower"
 
@@ -440,7 +447,6 @@ class _ThrowingPolicy(ConversationPolicy):
 
 
 class FailClosedDefault(unittest.TestCase):
-
     def test_throwing_policy_fails_closed(self):
         with LoomRoom(
             agents=[_agent("a", "x")],
@@ -451,8 +457,10 @@ class FailClosedDefault(unittest.TestCase):
             self.assertEqual(list(replies), [])
             # ``policy_error`` event is recorded.
             errors = [
-                ev for ev in room.session.bus.snapshot()
-                if ev.kind == "control" and isinstance(ev.body, dict)
+                ev
+                for ev in room.session.bus.snapshot()
+                if ev.kind == "control"
+                and isinstance(ev.body, dict)
                 and ev.body.get("control_type") == "policy_error"
             ]
             self.assertEqual(len(errors), 1)
@@ -489,13 +497,14 @@ class PolicyErrorModeIntegration(unittest.TestCase):
         ) as room:
             room.post_and_wait("hi", timeout=5.0)
             errors = [
-                ev for ev in room.session.bus.snapshot()
-                if ev.kind == "control" and isinstance(ev.body, dict)
+                ev
+                for ev in room.session.bus.snapshot()
+                if ev.kind == "control"
+                and isinstance(ev.body, dict)
                 and ev.body.get("control_type") == "policy_error"
             ]
             self.assertEqual(len(errors), 1)
-            self.assertEqual(errors[0].body.get("exception_class"),
-                             "RuntimeError")
+            self.assertEqual(errors[0].body.get("exception_class"), "RuntimeError")
 
     def test_raise_mode_propagates_to_caller(self):
         # In raise mode, the policy exception escapes back to whoever
@@ -511,8 +520,10 @@ class PolicyErrorModeIntegration(unittest.TestCase):
             # And a ``policy_error`` event was still recorded before the
             # re-raise (observability is preserved).
             errors = [
-                ev for ev in room.session.bus.snapshot()
-                if ev.kind == "control" and isinstance(ev.body, dict)
+                ev
+                for ev in room.session.bus.snapshot()
+                if ev.kind == "control"
+                and isinstance(ev.body, dict)
                 and ev.body.get("control_type") == "policy_error"
             ]
             self.assertEqual(len(errors), 1)
@@ -523,10 +534,11 @@ class PolicyErrorModeIntegration(unittest.TestCase):
 # the turn promptly (well under the idle timeout).
 # ---------------------------------------------------------------------------
 
-class PassClosesTurn(unittest.TestCase):
 
+class PassClosesTurn(unittest.TestCase):
     def test_required_pass_closes_turn_quickly(self):
         import time
+
         # Single required responder that emits exactly [PASS]. Before the
         # fix, the obligation never resolved and the room idled for 20 s.
         with LoomRoom(
@@ -539,9 +551,9 @@ class PassClosesTurn(unittest.TestCase):
         # No chat event (PASS suppresses the body).
         self.assertEqual(list(replies), [])
         # Turn must close cleanly, not by idle timeout.
-        self.assertLess(elapsed, 1.0,
-                        f"PASS-completion took {elapsed:.2f}s — "
-                        "should be near-instant")
+        self.assertLess(
+            elapsed, 1.0, f"PASS-completion took {elapsed:.2f}s — should be near-instant"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -550,11 +562,12 @@ class PassClosesTurn(unittest.TestCase):
 # fallback who actually drafts.
 # ---------------------------------------------------------------------------
 
-class DeadLetterFallbackResponds(unittest.TestCase):
 
+class DeadLetterFallbackResponds(unittest.TestCase):
     def test_removed_required_agent_fallback_replies(self):
         import threading
         import time
+
         long_b = "bravo sufficient long reply that bypasses loop guard."
         a_blocked = threading.Event()
         a_release = threading.Event()
@@ -592,7 +605,8 @@ class DeadLetterFallbackResponds(unittest.TestCase):
             self.assertEqual(ut.state, "closed")
             # B replied; A's stream did not commit (lease invalidated).
             chats = [
-                e for e in room.session.bus.snapshot()
+                e
+                for e in room.session.bus.snapshot()
                 if e.kind == "chat" and e.sender in ("a", "b")
             ]
             senders = [e.sender for e in chats]

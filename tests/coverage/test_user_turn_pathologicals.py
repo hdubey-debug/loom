@@ -3,10 +3,12 @@
 Covers the routing_case property, the can_draft cap-respecting branch,
 and the _cap hook that gives subclasses a way to inject per-plan caps.
 """
+
 from __future__ import annotations
 
 from loom.kernel.obligations import (
-    ResponseObligation, UserTurnPlan,
+    ResponseObligation,
+    UserTurnPlan,
 )
 from loom.kernel.user_turn import UserTurn, make_user_turn
 
@@ -19,8 +21,11 @@ def _make_turn() -> UserTurn:
         allowed_speakers=["alice"],
         obligations=[
             ResponseObligation(
-                id=0, participant_id="alice", level="must",
-                target_event_ids=[0], reason="addressed",
+                id=0,
+                participant_id="alice",
+                level="must",
+                target_event_ids=[0],
+                reason="addressed",
             ),
         ],
         routing_case="direct_mention",
@@ -65,7 +70,10 @@ def test_can_draft_with_subclass_cap_enforced():
         rationale="x",
     )
     capped = CappedTurn(
-        id=1, user_event_id=0, started_at=0.0, frozen_plan=plan,
+        id=1,
+        user_event_id=0,
+        started_at=0.0,
+        frozen_plan=plan,
     )
 
     # Below cap → True.
@@ -97,7 +105,10 @@ def test_post_init_preserves_explicit_last_activity_at():
         rationale="x",
     )
     turn = UserTurn(
-        id=1, user_event_id=0, started_at=100.0,
-        frozen_plan=plan, last_activity_at=42.0,
+        id=1,
+        user_event_id=0,
+        started_at=100.0,
+        frozen_plan=plan,
+        last_activity_at=42.0,
     )
     assert turn.last_activity_at == 42.0

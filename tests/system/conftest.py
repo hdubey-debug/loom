@@ -14,6 +14,7 @@ machinery across tiers.
 
 Stdlib only — no pytest-timeout / no hypothesis.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,22 +46,21 @@ from tests.subsystem.conftest import (  # noqa: F401  (re-exports)
 # Marker registration
 # ---------------------------------------------------------------------------
 
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
-        "markers",
-        "stress: heavier multi-turn workload; bounded by the system watchdog")
+        "markers", "stress: heavier multi-turn workload; bounded by the system watchdog"
+    )
     config.addinivalue_line(
-        "markers",
-        "timing: timing-sensitive; uses real wall-clock with generous margins")
+        "markers", "timing: timing-sensitive; uses real wall-clock with generous margins"
+    )
+    config.addinivalue_line("markers", "disk: touches the filesystem (always via tmp_path)")
     config.addinivalue_line(
-        "markers",
-        "disk: touches the filesystem (always via tmp_path)")
+        "markers", "breakpoint: probes the threshold at which behavior degrades"
+    )
     config.addinivalue_line(
-        "markers",
-        "breakpoint: probes the threshold at which behavior degrades")
-    config.addinivalue_line(
-        "markers",
-        "watchdog(seconds): override the default 90s watchdog ceiling")
+        "markers", "watchdog(seconds): override the default 90s watchdog ceiling"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +75,11 @@ class _WatchdogFired(Exception):
 
 
 def _signal_alarm_available() -> bool:
-    return (hasattr(signal, "SIGALRM")
-            and hasattr(signal, "alarm")
-            and threading.current_thread() is threading.main_thread())
+    return (
+        hasattr(signal, "SIGALRM")
+        and hasattr(signal, "alarm")
+        and threading.current_thread() is threading.main_thread()
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -94,8 +96,7 @@ def system_watchdog(request: pytest.FixtureRequest):
         prev_handler = signal.getsignal(signal.SIGALRM)
 
         def _handler(signum, frame):  # noqa: ARG001
-            raise _WatchdogFired(
-                f"system_watchdog fired after {seconds}s in {request.node.nodeid}")
+            raise _WatchdogFired(f"system_watchdog fired after {seconds}s in {request.node.nodeid}")
 
         signal.signal(signal.SIGALRM, _handler)
         signal.alarm(seconds)
@@ -112,11 +113,12 @@ def system_watchdog(request: pytest.FixtureRequest):
         fired.set()
         try:
             import ctypes  # noqa: PLC0415
+
             tid = threading.main_thread().ident
             if tid is not None:
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_long(tid),
-                    ctypes.py_object(_WatchdogFired))
+                    ctypes.c_long(tid), ctypes.py_object(_WatchdogFired)
+                )
         except Exception:  # pragma: no cover
             pass
 
@@ -128,13 +130,13 @@ def system_watchdog(request: pytest.FixtureRequest):
     finally:
         timer.cancel()
         if fired.is_set():
-            pytest.fail(f"system_watchdog fired after {seconds}s "
-                        f"in {request.node.nodeid}")
+            pytest.fail(f"system_watchdog fired after {seconds}s in {request.node.nodeid}")
 
 
 # ---------------------------------------------------------------------------
 # Thread-leak guard — strict superset of subsystem's.
 # ---------------------------------------------------------------------------
+
 
 def _system_thread_names() -> set[str]:
     """Names of Loom-owned threads currently alive.
@@ -170,14 +172,13 @@ def assert_no_thread_leak_extended(request: pytest.FixtureRequest):
         time.sleep(0.05)
     leaked = _system_thread_names() - before
     if leaked:
-        pytest.fail(
-            f"Loom threads leaked from {request.node.nodeid}: "
-            f"{sorted(leaked)}")
+        pytest.fail(f"Loom threads leaked from {request.node.nodeid}: {sorted(leaked)}")
 
 
 # ---------------------------------------------------------------------------
 # ThrottleConfig lifter — same seam used by subsystem stress tests.
 # ---------------------------------------------------------------------------
+
 
 def _lift_room_throttle(room: LoomRoom) -> None:
     """Replace the coordinator's throttle with a 10k/min ceiling.
@@ -188,6 +189,7 @@ def _lift_room_throttle(room: LoomRoom) -> None:
     on its own in ``test_resource_pressure.py`` without lifting).
     """
     from loom.kernel.coordinator import ThrottleConfig
+
     room.session.coordinator._throttle = ThrottleConfig(
         per_participant_per_min=10_000,
         per_channel_per_min=10_000,
@@ -197,6 +199,7 @@ def _lift_room_throttle(room: LoomRoom) -> None:
 # ---------------------------------------------------------------------------
 # multi_turn_session — primary long-haul fixture.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def multi_turn_session():
@@ -208,14 +211,18 @@ def multi_turn_session():
     """
     rooms: list[LoomRoom] = []
 
-    def _build(*, agents: Iterable, policy=None,
-               topic: Optional[str] = None,
-               anchor_id: Optional[str] = None,
-               default_responder_id: Optional[str] = None,
-               journal_dir: Optional[Path] = None,
-               policy_error_mode: str = "close_turn",
-               room_config: Optional[RoomConfig] = None,
-               lift_throttle: bool = True) -> LoomRoom:
+    def _build(
+        *,
+        agents: Iterable,
+        policy=None,
+        topic: Optional[str] = None,
+        anchor_id: Optional[str] = None,
+        default_responder_id: Optional[str] = None,
+        journal_dir: Optional[Path] = None,
+        policy_error_mode: str = "close_turn",
+        room_config: Optional[RoomConfig] = None,
+        lift_throttle: bool = True,
+    ) -> LoomRoom:
         kwargs = {
             "agents": list(agents),
             "topic": topic,
@@ -249,6 +256,7 @@ def multi_turn_session():
 # journaled_room — tmp_path-backed, validates JSONL on teardown.
 # ---------------------------------------------------------------------------
 
+
 def _validate_journal_jsonl(events_path: Path) -> None:
     """Verify every non-empty line of ``events.jsonl`` parses as JSON."""
     if not events_path.exists():
@@ -259,8 +267,7 @@ def _validate_journal_jsonl(events_path: Path) -> None:
         try:
             json.loads(line)
         except json.JSONDecodeError as exc:
-            pytest.fail(
-                f"journal line {i} malformed: {line!r} ({exc})")
+            pytest.fail(f"journal line {i} malformed: {line!r} ({exc})")
 
 
 @pytest.fixture
@@ -276,13 +283,17 @@ def journaled_room(tmp_path):
     journal_dir = tmp_path / "session"
     rooms: list[LoomRoom] = []
 
-    def _build(*, agents: Iterable, policy=None,
-               topic: Optional[str] = None,
-               anchor_id: Optional[str] = None,
-               default_responder_id: Optional[str] = None,
-               policy_error_mode: str = "close_turn",
-               room_config: Optional[RoomConfig] = None,
-               lift_throttle: bool = True) -> LoomRoom:
+    def _build(
+        *,
+        agents: Iterable,
+        policy=None,
+        topic: Optional[str] = None,
+        anchor_id: Optional[str] = None,
+        default_responder_id: Optional[str] = None,
+        policy_error_mode: str = "close_turn",
+        room_config: Optional[RoomConfig] = None,
+        lift_throttle: bool = True,
+    ) -> LoomRoom:
         kwargs = {
             "agents": list(agents),
             "topic": topic,
@@ -318,6 +329,7 @@ def journaled_room(tmp_path):
 # restart_helper — simulate process restart against the same journal dir.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def restart_helper():
     """Stop ``old_room``, then construct a fresh second ``LoomRoom`` over
@@ -333,20 +345,21 @@ def restart_helper():
     """
     rooms: list[LoomRoom] = []
 
-    def _restart(old_room: LoomRoom, *,
-                 agents: Iterable,
-                 policy=None,
-                 topic: Optional[str] = None,
-                 anchor_id: Optional[str] = None,
-                 default_responder_id: Optional[str] = None,
-                 policy_error_mode: str = "close_turn",
-                 room_config: Optional[RoomConfig] = None,
-                 lift_throttle: bool = True,
-                 ) -> Tuple[LoomRoom, Optional[dict]]:
+    def _restart(
+        old_room: LoomRoom,
+        *,
+        agents: Iterable,
+        policy=None,
+        topic: Optional[str] = None,
+        anchor_id: Optional[str] = None,
+        default_responder_id: Optional[str] = None,
+        policy_error_mode: str = "close_turn",
+        room_config: Optional[RoomConfig] = None,
+        lift_throttle: bool = True,
+    ) -> Tuple[LoomRoom, Optional[dict]]:
         journal_dir = old_room.journal_dir
         if journal_dir is None:
-            raise ValueError("restart_helper requires the old room to have "
-                             "a journal_dir")
+            raise ValueError("restart_helper requires the old room to have a journal_dir")
         old_room.stop(timeout=10.0)
         # Poll for state file flush — Lustre/NFS may lag the close.
         state_path = journal_dir / "room_state.json"
@@ -390,6 +403,7 @@ def restart_helper():
 # ---------------------------------------------------------------------------
 # event_recorder — bus subscriber with rich query helpers.
 # ---------------------------------------------------------------------------
+
 
 class _EventRecorder:
     """Bus subscriber. Captures every event; offers query helpers."""
@@ -441,8 +455,7 @@ class _EventRecorder:
         with self._lock:
             return len(self._events)
 
-    def snapshot_at(self,
-                    predicate: Callable[[Event], bool]) -> list[Event]:
+    def snapshot_at(self, predicate: Callable[[Event], bool]) -> list[Event]:
         """Return all events matching ``predicate`` at this instant."""
         return [e for e in self.events if predicate(e)]
 
@@ -459,14 +472,17 @@ def event_recorder():
 # ---------------------------------------------------------------------------
 
 # Healthy reply long enough to clear the loop guard and pass buffer.
-_LONG_REPLY = ("healthy reply long enough to bypass both the pass buffer "
-               "and the loop guard short-text threshold for canonical commit.")
+_LONG_REPLY = (
+    "healthy reply long enough to bypass both the pass buffer "
+    "and the loop guard short-text threshold for canonical commit."
+)
 
 
 def _healthy_send_for(pid: str, counter: list[int]):
     def _send(prompt):
         counter[0] += 1
         return f"{pid} reply {counter[0]}: {_LONG_REPLY}"
+
     return _send
 
 
@@ -494,14 +510,17 @@ def mixed_agent_room():
     rooms: list[LoomRoom] = []
     adv_factory = _AdversarialAgentFactory()
 
-    def _build(*, healthy: int = 3,
-               adversarial: Optional[List[Tuple[str, int]]] = None,
-               policy=None,
-               policy_error_mode: str = "close_turn",
-               default_responder_id: Optional[str] = None,
-               room_config: Optional[RoomConfig] = None,
-               journal_dir: Optional[Path] = None,
-               lift_throttle: bool = True) -> LoomRoom:
+    def _build(
+        *,
+        healthy: int = 3,
+        adversarial: Optional[List[Tuple[str, int]]] = None,
+        policy=None,
+        policy_error_mode: str = "close_turn",
+        default_responder_id: Optional[str] = None,
+        room_config: Optional[RoomConfig] = None,
+        journal_dir: Optional[Path] = None,
+        lift_throttle: bool = True,
+    ) -> LoomRoom:
         counter = [0]
         agents: list = []
         for i in range(healthy):
@@ -512,24 +531,19 @@ def mixed_agent_room():
             for j in range(count):
                 pid = f"adv_{kind}_{j}"
                 if kind == "hang":
-                    agents.append(adv_factory.hang_after_first_delta(
-                        pid, hang_seconds=2.0))
+                    agents.append(adv_factory.hang_after_first_delta(pid, hang_seconds=2.0))
                 elif kind == "slow":
-                    agents.append(adv_factory.slow_first_delta(
-                        pid, seconds=1.0))
+                    agents.append(adv_factory.slow_first_delta(pid, seconds=1.0))
                 elif kind == "infinite":
-                    agents.append(adv_factory.infinite_stream(
-                        pid, cap_chunks=200, chunk="x"))
+                    agents.append(adv_factory.infinite_stream(pid, cap_chunks=200, chunk="x"))
                 elif kind == "garbage":
                     agents.append(adv_factory.garbage_payload(pid))
                 elif kind == "none":
                     agents.append(adv_factory.yields_none(pid))
                 elif kind == "raises":
-                    agents.append(adv_factory.raises_after_chunks(
-                        pid, n=1))
+                    agents.append(adv_factory.raises_after_chunks(pid, n=1))
                 elif kind == "flood":
-                    agents.append(adv_factory.flood_chunks(
-                        pid, n_chunks=50))
+                    agents.append(adv_factory.flood_chunks(pid, n_chunks=50))
                 else:
                     raise ValueError(f"unknown adversarial kind: {kind!r}")
         kwargs = {
@@ -561,6 +575,7 @@ def mixed_agent_room():
 # ---------------------------------------------------------------------------
 # scripted_console — driver for run_console.
 # ---------------------------------------------------------------------------
+
 
 class _ConsoleScript:
     """Build a ``(prompt_fn, captured_lines)`` pair from a list of inputs.
@@ -600,12 +615,14 @@ class _ConsoleScript:
 def scripted_console():
     def _build(lines: List[Any]) -> _ConsoleScript:
         return _ConsoleScript(lines)
+
     return _build
 
 
 # ---------------------------------------------------------------------------
 # varied_agents — long-haul-friendly agent pool builder.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def varied_agents():
@@ -628,13 +645,12 @@ def varied_agents():
                     f"{prefix}{i} turn {counter[0]} reply "
                     "with sufficient length to bypass both the pass "
                     "buffer and the loop guard short-text threshold "
-                    "for canonical commit.")
+                    "for canonical commit."
+                )
+
             return _send
 
-        return [
-            agent_from_send(f"{prefix}{i}", _make(i))
-            for i in range(n)
-        ]
+        return [agent_from_send(f"{prefix}{i}", _make(i)) for i in range(n)]
 
     return _build
 
@@ -642,6 +658,7 @@ def varied_agents():
 # ---------------------------------------------------------------------------
 # slow_policy_factory — policies that sleep / raise on the Nth call.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def slow_policy_factory():
@@ -657,12 +674,15 @@ def slow_policy_factory():
             participant via plan_with_required.
     """
 
-    def _build(*, sleep_ms: int = 0,
-               raise_on_call: Optional[int] = None,
-               exc: type[BaseException] = RuntimeError,
-               message: str = "slow_policy_factory raise",
-               delegate: Optional[ConversationPolicy] = None,
-               name: str = "slow_policy") -> ConversationPolicy:
+    def _build(
+        *,
+        sleep_ms: int = 0,
+        raise_on_call: Optional[int] = None,
+        exc: type[BaseException] = RuntimeError,
+        message: str = "slow_policy_factory raise",
+        delegate: Optional[ConversationPolicy] = None,
+        name: str = "slow_policy",
+    ) -> ConversationPolicy:
         base = delegate if delegate is not None else OpenChatPolicy()
 
         class _SlowPolicy(ConversationPolicy):
@@ -687,6 +707,7 @@ def slow_policy_factory():
 # config_factory — DSL for RoomConfig deltas.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def config_factory():
     """Build a ``RoomConfig`` with selected fields overridden.
@@ -697,12 +718,15 @@ def config_factory():
     ``max_drafts_per_participant=1``.
     """
 
-    def _build(*, compact_threshold: int = 50,
-               user_turn_idle_timeout_s: int = 20,
-               user_turn_debounce_ms: int = 250,
-               pass_buffer_chars: int = 16,
-               lease_ttl_s: int = 60,
-               max_drafts_per_participant: int = 1) -> RoomConfig:
+    def _build(
+        *,
+        compact_threshold: int = 50,
+        user_turn_idle_timeout_s: int = 20,
+        user_turn_debounce_ms: int = 250,
+        pass_buffer_chars: int = 16,
+        lease_ttl_s: int = 60,
+        max_drafts_per_participant: int = 1,
+    ) -> RoomConfig:
         return RoomConfig(
             compact_threshold=compact_threshold,
             user_turn_idle_timeout_s=user_turn_idle_timeout_s,
@@ -719,6 +743,7 @@ def config_factory():
 # multi_room_factory — spawn N concurrent rooms.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def multi_room_factory(tmp_path):
     """Create N independent ``LoomRoom`` instances with distinct journals.
@@ -729,11 +754,14 @@ def multi_room_factory(tmp_path):
     """
     rooms: list[LoomRoom] = []
 
-    def _build(*, n: int = 3,
-               agents_per_room: int = 2,
-               policy=None,
-               with_journal: bool = True,
-               lift_throttle: bool = True) -> list[LoomRoom]:
+    def _build(
+        *,
+        n: int = 3,
+        agents_per_room: int = 2,
+        policy=None,
+        with_journal: bool = True,
+        lift_throttle: bool = True,
+    ) -> list[LoomRoom]:
         out: list[LoomRoom] = []
         for r in range(n):
             counter = [0]
@@ -741,15 +769,15 @@ def multi_room_factory(tmp_path):
             def _make(idx: int, room_idx: int = r):
                 def _send(prompt):
                     counter[0] += 1
-                    return (f"r{room_idx}-a{idx} turn {counter[0]} "
-                            "reply long enough to bypass both buffers "
-                            "of the Loom kernel for canonical commit.")
+                    return (
+                        f"r{room_idx}-a{idx} turn {counter[0]} "
+                        "reply long enough to bypass both buffers "
+                        "of the Loom kernel for canonical commit."
+                    )
+
                 return _send
 
-            agents = [
-                agent_from_send(f"r{r}_a{i}", _make(i))
-                for i in range(agents_per_room)
-            ]
+            agents = [agent_from_send(f"r{r}_a{i}", _make(i)) for i in range(agents_per_room)]
             kwargs: dict = {
                 "agents": agents,
                 "policy": policy if policy is not None else OpenChatPolicy(),
@@ -776,6 +804,7 @@ def multi_room_factory(tmp_path):
 # binary_search — shared bisection helper for break-point probes.
 # ---------------------------------------------------------------------------
 
+
 def _binary_search_impl(
     measure: Callable[[int], float],
     *,
@@ -800,8 +829,7 @@ def _binary_search_impl(
             break
         n *= 2
     print(f"BREAKPOINT: {label}={breakpoint_n}")
-    assert breakpoint_n >= floor, (
-        f"breakpoint {breakpoint_n} < floor {floor} for {label}")
+    assert breakpoint_n >= floor, f"breakpoint {breakpoint_n} < floor {floor} for {label}"
     return breakpoint_n
 
 
@@ -813,6 +841,7 @@ def binary_search():
 # ---------------------------------------------------------------------------
 # fake_clock — re-export of subsystem's monotonic-clock fake.
 # ---------------------------------------------------------------------------
+
 
 class _FakeClock:
     def __init__(self, start: float = 1_000_000.0) -> None:
@@ -880,5 +909,5 @@ def pytest_collection_modifyitems(config, items):
                 offenders.append(f"{path.name}: {pat}")
     if offenders:
         raise pytest.UsageError(
-            "tests/system/ violates public-API discipline:\n  "
-            + "\n  ".join(offenders))
+            "tests/system/ violates public-API discipline:\n  " + "\n  ".join(offenders)
+        )

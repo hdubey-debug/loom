@@ -16,6 +16,7 @@ Pass a custom policy to :func:`build_loom_session` (or
 not change. The default is :class:`loom.policy.default.DefaultPolicy`,
 which preserves v0.0 behavior.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -55,9 +56,11 @@ from loom.policy.default import DefaultPolicy
 # Wiring
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParticipantWiring:
     """One entry per Loom participant in a session."""
+
     id: str
     proxy: StreamingProxy
     persona: str = ""
@@ -76,6 +79,7 @@ class LoomSession:
     or unregistering an existing one. Both are safe to call after
     :func:`build_loom_session` returns and before :meth:`stop`.
     """
+
     bus: MessageBus
     state: RoomState
     coordinator: RoomCoordinator
@@ -94,8 +98,7 @@ class LoomSession:
     # reference, picking up new entries on every dispatch).
     _draft_handler: Optional[Callable] = field(default=None, repr=False)
     _started: bool = field(default=False, repr=False)
-    _membership_lock: threading.Lock = field(
-        default_factory=threading.Lock, repr=False)
+    _membership_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add_agent(self, wiring: ParticipantWiring) -> None:
         """Register a fresh participant + start its actor thread.
@@ -112,26 +115,28 @@ class LoomSession:
         if self._draft_handler is None:
             raise RuntimeError(
                 "session was constructed without a draft handler; "
-                "use build_loom_session() to create sessions")
+                "use build_loom_session() to create sessions"
+            )
         with self._membership_lock:
             if wiring.id in self.wirings:
-                raise ValueError(
-                    f"participant {wiring.id!r} already in room")
+                raise ValueError(f"participant {wiring.id!r} already in room")
             # Order: wire the proxy first (so the closure can find it),
             # then register kernel-side, then spin up the actor.
             self.wirings[wiring.id] = wiring
-            self.coordinator.register_participant(ParticipantInfo(
-                id=wiring.id, capable=wiring.capable,
-                cost_tier=wiring.cost_tier, active=True,
-            ))
-            actor = ParticipantActor(
-                wiring.id, self.bus, self.coordinator, self._draft_handler)
+            self.coordinator.register_participant(
+                ParticipantInfo(
+                    id=wiring.id,
+                    capable=wiring.capable,
+                    cost_tier=wiring.cost_tier,
+                    active=True,
+                )
+            )
+            actor = ParticipantActor(wiring.id, self.bus, self.coordinator, self._draft_handler)
             self.actors.append(actor)
             if self._started:
                 actor.start()
 
-    def remove_agent(self, agent_id: str, *,
-                     actor_stop_timeout: float = 0.5) -> None:
+    def remove_agent(self, agent_id: str, *, actor_stop_timeout: float = 0.5) -> None:
         """Stop the actor + unregister the participant.
 
         Idempotent for a non-existent id only via :class:`KeyError` —
@@ -144,10 +149,12 @@ class LoomSession:
         unblocked if this was the last unresolved required participant.
         """
         with self._membership_lock:
-            actor = next(
-                (a for a in self.actors if a.id == agent_id), None)
-            if actor is None and agent_id not in self.wirings \
-                    and agent_id not in self.state.participants:
+            actor = next((a for a in self.actors if a.id == agent_id), None)
+            if (
+                actor is None
+                and agent_id not in self.wirings
+                and agent_id not in self.state.participants
+            ):
                 raise KeyError(f"unknown participant: {agent_id}")
             if actor is not None:
                 actor.stop(timeout=actor_stop_timeout)
@@ -190,20 +197,25 @@ class LoomSession:
         self.bus.stop()
 
 
-def _make_draft_handler(wirings: dict[str, ParticipantWiring],
-                        policy: ConversationPolicy):
+def _make_draft_handler(wirings: dict[str, ParticipantWiring], policy: ConversationPolicy):
     def handler(actor, trigger, lease):
         wiring = wirings[actor.id]
         prompt = build_prompt(
-            actor.id, trigger, actor.coordinator,
+            actor.id,
+            trigger,
+            actor.coordinator,
             persona=wiring.persona,
             capability_block=wiring.capability_block,
             policy=policy,
         )
         run_streaming_call(
-            wiring.proxy, prompt, lease,
-            actor.bus, actor.coordinator,
+            wiring.proxy,
+            prompt,
+            lease,
+            actor.bus,
+            actor.coordinator,
         )
+
     return handler
 
 
@@ -238,9 +250,7 @@ def build_loom_session(
 
     if policy is None:
         policy = DefaultPolicy()
-    coord = RoomCoordinator(bus, state,
-                            policy_error_mode=policy_error_mode,
-                            policy=policy)
+    coord = RoomCoordinator(bus, state, policy_error_mode=policy_error_mode, policy=policy)
 
     journal = None
     if journal_dir is not None:
@@ -267,10 +277,13 @@ def build_loom_session(
         # thread-actor binding check; ``journal_error`` is privileged
         # kernel emission with sender="system".
         def _on_journal_failure(exc: Exception) -> None:
-            bus.post_internal(ev.journal_error(
-                exception_class=type(exc).__name__,
-                message=str(exc)[:500],
-            ), auth=_KERNEL_AUTH)
+            bus.post_internal(
+                ev.journal_error(
+                    exception_class=type(exc).__name__,
+                    message=str(exc)[:500],
+                ),
+                auth=_KERNEL_AUTH,
+            )
 
         journal.set_failure_callback(_on_journal_failure)
 
@@ -280,17 +293,22 @@ def build_loom_session(
         # post thread (likely a bound actor thread) and the event has
         # sender="system".
         def _on_snapshot_drop(total: int, depth: int) -> None:
-            bus.post_internal(ev.snapshot_dropped(
-                dropped_total=total, queue_depth=depth), auth=_KERNEL_AUTH)
+            bus.post_internal(
+                ev.snapshot_dropped(dropped_total=total, queue_depth=depth), auth=_KERNEL_AUTH
+            )
 
         journal.set_snapshot_drop_callback(_on_snapshot_drop)
 
     by_id: dict[str, ParticipantWiring] = {}
     for w in wirings:
-        coord.register_participant(ParticipantInfo(
-            id=w.id, capable=w.capable,
-            cost_tier=w.cost_tier, active=True,
-        ))
+        coord.register_participant(
+            ParticipantInfo(
+                id=w.id,
+                capable=w.capable,
+                cost_tier=w.cost_tier,
+                active=True,
+            )
+        )
         by_id[w.id] = w
 
     # Phase 0 audit: fail-loud if the wiring code passes a default
@@ -303,29 +321,32 @@ def build_loom_session(
             raise ValueError(
                 f"default_responder_id {default_responder_id!r} is not "
                 f"a registered participant; known ids: "
-                f"{sorted(by_id)}")
+                f"{sorted(by_id)}"
+            )
         coord.set_default_responder(default_responder_id)
     if anchor_id is not None:
         if anchor_id not in by_id:
             raise ValueError(
                 f"anchor_id {anchor_id!r} is not a registered "
-                f"participant; known ids: {sorted(by_id)}")
+                f"participant; known ids: {sorted(by_id)}"
+            )
         coord.set_anchor(anchor_id)
     if topic is not None:
         coord.set_topic(topic)
 
     handler = _make_draft_handler(by_id, policy)
-    actors = [
-        ParticipantActor(w.id, bus, coord, handler)
-        for w in wirings
-    ]
+    actors = [ParticipantActor(w.id, bus, coord, handler) for w in wirings]
     if auto_start:
         for a in actors:
             a.start()
 
     return LoomSession(
-        bus=bus, state=state, coordinator=coord,
-        journal=journal, actors=actors, wirings=by_id,
+        bus=bus,
+        state=state,
+        coordinator=coord,
+        journal=journal,
+        actors=actors,
+        wirings=by_id,
         policy=policy,
         _draft_handler=handler,
         _started=auto_start,
@@ -346,8 +367,7 @@ class SlashResult:
     message: Optional[str] = None
 
 
-def handle_slash_command(text: str, session: LoomSession,
-                         *, console=None) -> SlashResult:
+def handle_slash_command(text: str, session: LoomSession, *, console=None) -> SlashResult:
     """Interpret a single ``/<cmd> [args]`` line against ``session``.
 
     Returns ``handled=True`` if recognized, with ``quit=True`` for
@@ -363,26 +383,30 @@ def handle_slash_command(text: str, session: LoomSession,
     state = session.state
 
     if cmd in ("leave", "quit", "exit"):
-        return SlashResult(handled=True, quit=True,
-                           message="leaving session")
+        return SlashResult(handled=True, quit=True, message="leaving session")
 
     if cmd == "who":
         ps = sorted(state.participants.keys())
         ctl = state.control
-        bits = [f"members: {', '.join(ps)}",
-                f"topic: {state.topic or '(none)'}",
-                f"style: {ctl.style}"]
+        bits = [
+            f"members: {', '.join(ps)}",
+            f"topic: {state.topic or '(none)'}",
+            f"style: {ctl.style}",
+        ]
         if ctl.roles:
-            bits.append("roles: " + ", ".join(
-                f"{pid}={role}" for pid, role in sorted(ctl.roles.items())))
+            bits.append(
+                "roles: " + ", ".join(f"{pid}={role}" for pid, role in sorted(ctl.roles.items()))
+            )
         return SlashResult(handled=True, message=" | ".join(bits))
 
     if cmd == "mode":
         return SlashResult(
             handled=True,
-            message=("/mode is removed in Loom v0 — group chat is the only "
-                     "behavior. Use /responder to change the default "
-                     "responder, /add /remove to manage members."),
+            message=(
+                "/mode is removed in Loom v0 — group chat is the only "
+                "behavior. Use /responder to change the default "
+                "responder, /add /remove to manage members."
+            ),
         )
 
     if cmd == "topic":
@@ -393,8 +417,7 @@ def handle_slash_command(text: str, session: LoomSession,
         if args and len(args) > 500:
             return SlashResult(
                 handled=True,
-                message=(f"/topic argument too long "
-                         f"({len(args)} > 500 chars)"),
+                message=(f"/topic argument too long ({len(args)} > 500 chars)"),
             )
         coord.set_topic(args or None)
         return SlashResult(
@@ -408,18 +431,19 @@ def handle_slash_command(text: str, session: LoomSession,
         # ``session.add_agent(wiring)`` or ``room.add_agent(agent)``.
         return SlashResult(
             handled=True,
-            message=("/add via slash command is not supported — proxies "
-                     "must be wired in code. Use "
-                     "session.add_agent(ParticipantWiring(...)) or "
-                     "room.add_agent(agent_from_send(...))."),
+            message=(
+                "/add via slash command is not supported — proxies "
+                "must be wired in code. Use "
+                "session.add_agent(ParticipantWiring(...)) or "
+                "room.add_agent(agent_from_send(...))."
+            ),
         )
 
     if cmd == "remove":
         if not args:
             return SlashResult(handled=True, message="usage: /remove <id>")
         if args not in state.participants:
-            return SlashResult(handled=True,
-                               message=f"{args} not in room")
+            return SlashResult(handled=True, message=f"{args} not in room")
         try:
             session.remove_agent(args)
         except KeyError as exc:
@@ -428,46 +452,42 @@ def handle_slash_command(text: str, session: LoomSession,
 
     if cmd == "cancel":
         coord.close_user_turn("cancelled")
-        return SlashResult(handled=True,
-                           message="user turn cancelled")
+        return SlashResult(handled=True, message="user turn cancelled")
 
     if cmd == "dm":
         parts = args.split(None, 1)
         if len(parts) != 2:
-            return SlashResult(handled=True,
-                               message="usage: /dm <id> <message>")
+            return SlashResult(handled=True, message="usage: /dm <id> <message>")
         target, body = parts
         if target not in state.participants:
-            return SlashResult(handled=True,
-                               message=f"unknown participant: {target}")
-        e = ev.chat(sender="user", body=body,
-                    addressees=[target],
-                    channel=f"dm:{target}",
-                    room_epoch=state.room_epoch)
+            return SlashResult(handled=True, message=f"unknown participant: {target}")
+        e = ev.chat(
+            sender="user",
+            body=body,
+            addressees=[target],
+            channel=f"dm:{target}",
+            room_epoch=state.room_epoch,
+        )
 
         def _dm_plan(posted_event: Event):
-            return plan_for_default(target, reason="dm",
-                                    target_event_ids=[posted_event.id],
-                                    rationale="direct DM")
+            return plan_for_default(
+                target, reason="dm", target_event_ids=[posted_event.id], rationale="direct DM"
+            )
 
         coord.post_user_event_and_open_turn(e, _dm_plan)
-        return SlashResult(handled=True,
-                           message=f"DM → {target}")
+        return SlashResult(handled=True, message=f"DM → {target}")
 
     if cmd == "summary":
         snap = session.bus.snapshot(channel="main", kinds=["summary"])
         if not snap:
-            return SlashResult(handled=True,
-                               message="no summary yet")
+            return SlashResult(handled=True, message="no summary yet")
         return SlashResult(handled=True, message=snap[-1].body)
 
     if cmd == "anchor":
         if not args:
-            return SlashResult(handled=True,
-                               message=f"anchor: {state.anchor_id}")
+            return SlashResult(handled=True, message=f"anchor: {state.anchor_id}")
         if args not in state.participants:
-            return SlashResult(handled=True,
-                               message=f"unknown participant: {args}")
+            return SlashResult(handled=True, message=f"unknown participant: {args}")
         coord.set_anchor(args)
         return SlashResult(handled=True, message=f"anchor → {args}")
 
@@ -478,11 +498,9 @@ def handle_slash_command(text: str, session: LoomSession,
                 message=f"default responder: {state.default_responder_id}",
             )
         if args not in state.participants:
-            return SlashResult(handled=True,
-                               message=f"unknown participant: {args}")
+            return SlashResult(handled=True, message=f"unknown participant: {args}")
         coord.set_default_responder(args)
-        return SlashResult(handled=True,
-                           message=f"default_responder → {args}")
+        return SlashResult(handled=True, message=f"default_responder → {args}")
 
     # ------------------------------------------------------------------
     # Room control state — roles / floor / quiet / style / goal
@@ -495,8 +513,7 @@ def handle_slash_command(text: str, session: LoomSession,
             current = state.control.roles
             if not current:
                 return SlashResult(handled=True, message="(no roles set)")
-            pretty = ", ".join(f"{pid}={role}"
-                               for pid, role in sorted(current.items()))
+            pretty = ", ".join(f"{pid}={role}" for pid, role in sorted(current.items()))
             return SlashResult(handled=True, message=f"roles: {pretty}")
         new_roles, errors = _parse_roles_args(args, state.participants)
         if errors:
@@ -507,8 +524,7 @@ def handle_slash_command(text: str, session: LoomSession,
         coord.set_roles(new_roles)
         if not new_roles:
             return SlashResult(handled=True, message="roles cleared")
-        pretty = ", ".join(f"{pid}={role}"
-                           for pid, role in sorted(new_roles.items()))
+        pretty = ", ".join(f"{pid}={role}" for pid, role in sorted(new_roles.items()))
         return SlashResult(handled=True, message=f"roles → {pretty}")
 
     if cmd in ("floor", "release", "quiet"):
@@ -525,7 +541,8 @@ def handle_slash_command(text: str, session: LoomSession,
                 "/floor /release /quiet were removed in v0.2 — "
                 "address agents directly via @<id> for per-turn "
                 "narrowing, or use a custom policy for persistent "
-                "narrowing."),
+                "narrowing."
+            ),
         )
 
     if cmd == "goal":
@@ -533,16 +550,15 @@ def handle_slash_command(text: str, session: LoomSession,
         # separate fields (state.topic + control.active_goal); they
         # collapsed into a single source of truth on state.topic.
         if not args:
-            current = state.topic
+            current_topic = state.topic
             return SlashResult(
                 handled=True,
-                message=f"topic: {current or '(none)'}",
+                message=f"topic: {current_topic or '(none)'}",
             )
         if len(args) > 500:
             return SlashResult(
                 handled=True,
-                message=(f"/goal argument too long "
-                         f"({len(args)} > 500 chars)"),
+                message=(f"/goal argument too long ({len(args)} > 500 chars)"),
             )
         coord.set_topic(args)
         return SlashResult(handled=True, message=f"topic → {args}")
@@ -568,8 +584,7 @@ def handle_slash_command(text: str, session: LoomSession,
             f"topic: {state.topic or '(none)'}",
         ]
         if ctl.roles:
-            roles_str = ", ".join(f"{pid}={role}"
-                                  for pid, role in sorted(ctl.roles.items()))
+            roles_str = ", ".join(f"{pid}={role}" for pid, role in sorted(ctl.roles.items()))
             lines.append(f"roles: {roles_str}")
         else:
             lines.append("roles: (none)")
@@ -577,15 +592,16 @@ def handle_slash_command(text: str, session: LoomSession,
 
     return SlashResult(
         handled=True,
-        message=(f"unknown command: /{cmd}  (try /who, /topic, /add, "
-                 f"/remove, /cancel, /dm, /summary, /anchor, "
-                 f"/responder, /roles, /goal, /brief, /normal, "
-                 f"/detailed, /control, /leave)"),
+        message=(
+            f"unknown command: /{cmd}  (try /who, /topic, /add, "
+            f"/remove, /cancel, /dm, /summary, /anchor, "
+            f"/responder, /roles, /goal, /brief, /normal, "
+            f"/detailed, /control, /leave)"
+        ),
     )
 
 
-def _parse_roles_args(args: str,
-                      participants: dict) -> tuple[dict[str, str], str]:
+def _parse_roles_args(args: str, participants: dict) -> tuple[dict[str, str], str]:
     """Parse ``/roles`` argument string into a {pid: role} dict.
 
     Format: ``pid=role pid=role ...``. Returns ``(roles, error_message)``;
@@ -629,8 +645,7 @@ the standard mention-id alphabet.
 """
 
 
-def post_user_text(session: LoomSession, text: str,
-                   *, channel: str = "main") -> Event:
+def post_user_text(session: LoomSession, text: str, *, channel: str = "main") -> Event:
     """Post a user message and (re-)open a UserTurn via the room policy.
 
     Mentions (``@id``) are extracted to populate ``addressees``. The
@@ -649,14 +664,14 @@ def post_user_text(session: LoomSession, text: str,
     untrusted text.
     """
     if not _VALID_CHANNEL_RE.match(channel):
-        raise ValueError(
-            f"channel must match {_VALID_CHANNEL_RE.pattern!r}, got "
-            f"{channel!r}")
+        raise ValueError(f"channel must match {_VALID_CHANNEL_RE.pattern!r}, got {channel!r}")
     addressable = list(session.state.participants.keys())
     addressees = parse_addressees(text, addressable, exclude="user")
     e = ev.chat(
-        sender="user", body=text,
-        addressees=addressees, channel=channel,
+        sender="user",
+        body=text,
+        addressees=addressees,
+        channel=channel,
         room_epoch=session.state.room_epoch,
     )
 
@@ -664,8 +679,7 @@ def post_user_text(session: LoomSession, text: str,
         # P2.7: ``prior_speaker`` removed from the policy contract.
         # ``last_responsible_speaker`` remains usable for policies that
         # want it via their own constructor.
-        return session.policy.plan_user_turn(
-            posted_event, session.state.view())
+        return session.policy.plan_user_turn(posted_event, session.state.view())
 
     session.coordinator.post_user_event_and_open_turn(e, _classify_after_post)
     return e
@@ -675,6 +689,7 @@ def post_user_text(session: LoomSession, text: str,
 # Console rendering helpers
 # ---------------------------------------------------------------------------
 
+
 def _format_control(event: Event) -> Optional[str]:
     """Pretty one-liner for a control event. Returns ``None`` to suppress."""
     if not isinstance(event.body, dict):
@@ -683,16 +698,14 @@ def _format_control(event: Event) -> Optional[str]:
     if ct == "topic_changed":
         return f"topic → {event.body.get('new') or '(cleared)'}"
     if ct == "dead_letter":
-        return (f"mention dead-lettered → {event.body.get('reroute_to')} "
-                f"({event.body.get('reason')})")
+        return (
+            f"mention dead-lettered → {event.body.get('reroute_to')} ({event.body.get('reason')})"
+        )
     if ct == "default_responder_changed":
-        return (f"default responder: {event.body.get('old_id')} → "
-                f"{event.body.get('new_id')}")
-    if ct in ("anchor_changed", "chair_changed",
-              "default_summarizer_changed"):
+        return f"default responder: {event.body.get('old_id')} → {event.body.get('new_id')}"
+    if ct in ("anchor_changed", "chair_changed", "default_summarizer_changed"):
         slot = ct[: -len("_changed")].replace("_", " ")
-        return (f"{slot}: {event.body.get('old_id')} → "
-                f"{event.body.get('new_id')}")
+        return f"{slot}: {event.body.get('old_id')} → {event.body.get('new_id')}"
     if ct == "participant_added":
         return f"+ {event.body.get('id')}"
     if ct == "participant_removed":
@@ -706,9 +719,7 @@ def _format_control(event: Event) -> Optional[str]:
         if reason == "obligation_unresolved":
             return "(required participant did not reply)"
         return f"user turn closed ({reason})"
-    if ct in ("user_turn_opened",
-              "obligation_recorded",
-              "obligation_resolved"):
+    if ct in ("user_turn_opened", "obligation_recorded", "obligation_resolved"):
         # Internal accounting — silent in the console.
         return None
     return None  # unknown control_type — drop, never leak dict repr
@@ -718,11 +729,12 @@ def _make_console_subscriber(
     notify: Callable[[str], None],
 ) -> Callable[[Event], None]:
     """Return the bus subscriber used by :func:`run_loom_console`."""
+
     def _on_event(event: Event) -> None:
         if event.kind == "chat":
             if event.sender == "user":
                 if event.channel.startswith("dm:"):
-                    target = event.channel[len("dm:"):]
+                    target = event.channel[len("dm:") :]
                     notify(f"\n(dm → {target}) ▸ {event.body}")
                 return
             if event.channel != "main":
@@ -736,12 +748,14 @@ def _make_console_subscriber(
             return
         # stream events: drop in v0 (chat event is the canonical render).
         return
+
     return _on_event
 
 
 # ---------------------------------------------------------------------------
 # Convenience: a simple console-driven loop (for /loom slash command)
 # ---------------------------------------------------------------------------
+
 
 def run_loom_console(
     wirings: list[ParticipantWiring],
@@ -767,8 +781,10 @@ def run_loom_console(
     :func:`build_loom_session`. See that function for semantics.
     """
     if prompt_fn is None:
+
         def prompt_fn():  # pragma: no cover - interactive TTY default
             return input("you ▸ ")
+
     if notify is None:
         notify = print
 

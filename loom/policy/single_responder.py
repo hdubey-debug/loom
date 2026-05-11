@@ -19,8 +19,10 @@ Useful as:
 - A reference for authors who want a fixed-recipient policy with no
   fall-through to other participants.
 """
+
 from __future__ import annotations
 
+from loom.kernel import obligations as obl
 from loom.kernel.events import Event
 from loom.kernel.room import RoomStateView
 from loom.policy.base import BasicPolicy
@@ -33,33 +35,34 @@ class SingleResponderPolicy(BasicPolicy):
 
     def __init__(self, responder_id: str) -> None:
         if not responder_id or not isinstance(responder_id, str):
-            raise ValueError(
-                "SingleResponderPolicy requires a non-empty responder_id")
+            raise ValueError("SingleResponderPolicy requires a non-empty responder_id")
         self.responder_id = responder_id
 
     def _choose_responders(
-        self, user_event: Event, state: RoomStateView,
+        self,
+        user_event: Event,
+        state: RoomStateView,
     ) -> set[str]:
         info = state.participants.get(self.responder_id)
         if info is None or not info.active or not info.capable:
             return set()
         return {self.responder_id}
 
-    def _routing_case(self) -> str:
+    def _routing_case(self) -> obl.RoutingCase:
         return "single_responder"
 
     def _wait_for_user_after(self) -> bool:
         return True
 
     def _instruction(self, state: RoomStateView) -> str:
-        return (f"You ({self.responder_id}) are the configured "
-                "responder for this room.")
+        return f"You ({self.responder_id}) are the configured responder for this room."
 
     def _rationale(
-        self, responders: list[str], state: RoomStateView,
+        self,
+        responders: list[str],
+        state: RoomStateView,
     ) -> str:
         return f"single responder: {self.responder_id}"
 
     def _no_responders_rationale(self, state: RoomStateView) -> str:
-        return (f"configured responder {self.responder_id!r} "
-                "not active/capable")
+        return f"configured responder {self.responder_id!r} not active/capable"

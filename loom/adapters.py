@@ -27,6 +27,7 @@ dependencies. Any caller that already has a richer streaming proxy
 can feed it straight into a :class:`ParticipantWiring` without going
 through these helpers — the agent abstraction is duck-typed.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Iterator, Optional
@@ -35,6 +36,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 # ---------------------------------------------------------------------------
 # Send → stream wrapper (canonical pattern for non-streaming clients)
 # ---------------------------------------------------------------------------
+
 
 class SendProxyAdapter:
     """Wrap any proxy with a ``send(prompt) -> str`` method into a streaming proxy.
@@ -51,8 +53,7 @@ class SendProxyAdapter:
     ``cancel()`` semantics or attaching extra metadata attributes).
     """
 
-    def __init__(self, proxy: Any,
-                 send_method: str = "send") -> None:
+    def __init__(self, proxy: Any, send_method: str = "send") -> None:
         self._proxy = proxy
         self._send_method = send_method
         self._cancelled = False
@@ -116,8 +117,14 @@ class _FunctionAgent:
     """
 
     __slots__ = (
-        "id", "persona", "capability_block", "cost_tier", "capable",
-        "_stream_callable", "_cancel_callable", "_cancelled",
+        "id",
+        "persona",
+        "capability_block",
+        "cost_tier",
+        "capable",
+        "_stream_callable",
+        "_cancel_callable",
+        "_cancelled",
     )
 
     def __init__(
@@ -190,9 +197,12 @@ def agent_from_send(
             yield text
 
     return _FunctionAgent(
-        agent_id, _stream,
-        persona=persona, capability_block=capability_block,
-        cost_tier=cost_tier, capable=capable,
+        agent_id,
+        _stream,
+        persona=persona,
+        capability_block=capability_block,
+        cost_tier=cost_tier,
+        capable=capable,
         cancel_callable=cancel_fn,
     )
 
@@ -225,9 +235,12 @@ def agent_from_stream(
                 yield str(chunk)
 
     return _FunctionAgent(
-        agent_id, _stream,
-        persona=persona, capability_block=capability_block,
-        cost_tier=cost_tier, capable=capable,
+        agent_id,
+        _stream,
+        persona=persona,
+        capability_block=capability_block,
+        cost_tier=cost_tier,
+        capable=capable,
         cancel_callable=cancel_fn,
     )
 
@@ -258,21 +271,20 @@ def agent_from_object(
     stream_method = getattr(obj, "stream", None)
     send_method = getattr(obj, "send", None)
 
-    resolved_persona = persona if persona is not None else getattr(
-        obj, "persona", "")
-    resolved_caps = capability_block if capability_block is not None else \
-        getattr(obj, "capability_block", "")
-    resolved_tier = cost_tier if cost_tier is not None else getattr(
-        obj, "cost_tier", 1)
-    resolved_capable = capable if capable is not None else getattr(
-        obj, "capable", True)
+    resolved_persona = persona if persona is not None else getattr(obj, "persona", "")
+    resolved_caps = (
+        capability_block if capability_block is not None else getattr(obj, "capability_block", "")
+    )
+    resolved_tier = cost_tier if cost_tier is not None else getattr(obj, "cost_tier", 1)
+    resolved_capable = capable if capable is not None else getattr(obj, "capable", True)
     cancel_fn = getattr(obj, "cancel", None)
     if not callable(cancel_fn):
         cancel_fn = None
 
     if callable(stream_method):
         return agent_from_stream(
-            agent_id, stream_method,
+            agent_id,
+            stream_method,
             persona=resolved_persona,
             capability_block=resolved_caps,
             cost_tier=resolved_tier,
@@ -281,7 +293,8 @@ def agent_from_object(
         )
     if callable(send_method):
         return agent_from_send(
-            agent_id, send_method,
+            agent_id,
+            send_method,
             persona=resolved_persona,
             capability_block=resolved_caps,
             cost_tier=resolved_tier,
@@ -289,5 +302,5 @@ def agent_from_object(
             cancel_fn=cancel_fn,
         )
     raise TypeError(
-        f"agent_from_object: {type(obj).__name__} exposes neither "
-        ".stream(prompt) nor .send(prompt)")
+        f"agent_from_object: {type(obj).__name__} exposes neither .stream(prompt) nor .send(prompt)"
+    )

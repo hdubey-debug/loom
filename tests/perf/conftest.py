@@ -11,6 +11,7 @@ The :func:`_bench` helper is the single entry point. It returns a
 The default-suite ``make test`` excludes these tests via the ``perf``
 marker; ``make bench`` runs only them.
 """
+
 from __future__ import annotations
 
 import gc
@@ -100,8 +101,10 @@ def _bench(
 @pytest.fixture
 def bench(request: pytest.FixtureRequest) -> Callable[..., BenchResult]:
     """Return a curried :func:`_bench` that records onto ``request.node``."""
+
     def runner(fn: Callable[[], Any], *, name: str, **kw: Any) -> BenchResult:
         return _bench(fn, name=name, record=request.node, **kw)
+
     return runner
 
 
@@ -125,9 +128,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
             _collected.append(v)
 
 
-def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter,
-                            exitstatus: int,
-                            config: pytest.Config) -> None:
+def pytest_terminal_summary(
+    terminalreporter: pytest.TerminalReporter, exitstatus: int, config: pytest.Config
+) -> None:
     if not _collected:
         return
     tr = terminalreporter

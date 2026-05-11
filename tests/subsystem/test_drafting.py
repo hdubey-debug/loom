@@ -6,6 +6,7 @@ payloads, infinite streams, exceptions, ``None`` yields, chunk floods)
 and asserts the pipeline emits the right stream-end status without
 leaking partial state or threads.
 """
+
 from __future__ import annotations
 
 import time
@@ -24,11 +25,9 @@ from loom.kernel.room import (
 from loom.kernel.streaming import run_streaming_call
 
 
-def _streaming_setup(*, holder="loom", lease_ttl_s=60,
-                     pass_buffer_chars=16):
+def _streaming_setup(*, holder="loom", lease_ttl_s=60, pass_buffer_chars=16):
     bus = MessageBus()
-    cfg = RoomConfig(pass_buffer_chars=pass_buffer_chars,
-                     lease_ttl_s=lease_ttl_s)
+    cfg = RoomConfig(pass_buffer_chars=pass_buffer_chars, lease_ttl_s=lease_ttl_s)
     state = RoomState(config=cfg)
     state.add_participant(ParticipantInfo(id=holder, cost_tier=0))
     state.add_participant(ParticipantInfo(id="other", cost_tier=1))
@@ -36,8 +35,7 @@ def _streaming_setup(*, holder="loom", lease_ttl_s=60,
     coord = RoomCoordinator(bus, state)
     user_event = ev.chat(sender="user", body="hi")
     bus.post(user_event)
-    plan = plan_for_default(holder, reason="adversarial",
-                            target_event_ids=[user_event.id])
+    plan = plan_for_default(holder, reason="adversarial", target_event_ids=[user_event.id])
     coord.open_user_turn(user_event, plan)
     lease = coord.acquire_lease(holder, user_event.id)
     return bus, state, coord, lease
@@ -48,18 +46,16 @@ def _stream_events(bus):
 
 
 def _chat_events(bus):
-    return [e for e in bus.snapshot()
-            if e.kind == "chat" and e.sender != "user"]
+    return [e for e in bus.snapshot() if e.kind == "chat" and e.sender != "user"]
 
 
 # ---------------------------------------------------------------------------
 # Adversarial stream behaviors.
 # ---------------------------------------------------------------------------
 
-class TestAdversarialStream:
 
-    def test_garbage_payload_does_not_crash_pipeline(
-            self, adversarial_agent):
+class TestAdversarialStream:
+    def test_garbage_payload_does_not_crash_pipeline(self, adversarial_agent):
         # Non-printable bytes / encoding-edge chars must not crash the
         # streaming proxy.
         bus, _state, coord, lease = _streaming_setup()
@@ -68,11 +64,13 @@ class TestAdversarialStream:
         # Some terminal status was emitted.
         sevs = _stream_events(bus)
         assert sevs[-1].body["status"] in {
-            "committed", "suppressed", "passed", "error",
+            "committed",
+            "suppressed",
+            "passed",
+            "error",
         }
 
-    def test_yields_none_pipeline_remains_consistent(
-            self, adversarial_agent):
+    def test_yields_none_pipeline_remains_consistent(self, adversarial_agent):
         # Adapter filters None chunks; the visible content commits.
         bus, _state, coord, lease = _streaming_setup()
         agent = adversarial_agent.yields_none("loom")
@@ -85,11 +83,11 @@ class TestAdversarialStream:
             assert len(chats) == 1
             assert "real content" in chats[0].body
 
-    def test_raises_after_chunks_emits_error_status(
-            self, adversarial_agent):
+    def test_raises_after_chunks_emits_error_status(self, adversarial_agent):
         bus, _state, coord, lease = _streaming_setup()
         agent = adversarial_agent.raises_after_chunks(
-            "loom", n=2, exc=RuntimeError, message="midway boom")
+            "loom", n=2, exc=RuntimeError, message="midway boom"
+        )
         run_streaming_call(agent, "<prompt>", lease, bus, coord)
         sevs = _stream_events(bus)
         assert sevs[-1].body["status"] == "error"
@@ -99,7 +97,8 @@ class TestAdversarialStream:
         # Raise on the first iteration must not leave a partial chat.
         bus, _state, coord, lease = _streaming_setup()
         agent = adversarial_agent.raises_after_chunks(
-            "loom", n=0, exc=ValueError, message="immediate")
+            "loom", n=0, exc=ValueError, message="immediate"
+        )
         run_streaming_call(agent, "<prompt>", lease, bus, coord)
         assert _chat_events(bus) == []
         sevs = _stream_events(bus)
@@ -107,24 +106,21 @@ class TestAdversarialStream:
 
     @pytest.mark.stress
     @pytest.mark.breakpoint
-    def test_breakpoint_infinite_stream_bounded_at_chunk_cap(
-            self, adversarial_agent):
+    def test_breakpoint_infinite_stream_bounded_at_chunk_cap(self, adversarial_agent):
         # The infinite_stream factory yields up to cap_chunks chunks.
         # Even at cap=10000 the pipeline must terminate within the
         # watchdog window. Floor: at least 100 chunks.
         floor = 100
         cap = 10000
         bus, _state, coord, lease = _streaming_setup()
-        agent = adversarial_agent.infinite_stream(
-            "loom", cap_chunks=cap, chunk="x")
+        agent = adversarial_agent.infinite_stream("loom", cap_chunks=cap, chunk="x")
         t0 = time.monotonic()
         run_streaming_call(agent, "<prompt>", lease, bus, coord)
         elapsed = time.monotonic() - t0
         sevs = _stream_events(bus)
         # Whatever terminal status, the run completed.
         assert sevs[-1].body["stream_event"] == "end"
-        print(f"BREAKPOINT: infinite_stream_cap={cap} "
-              f"completed_in={elapsed:.3f}s")
+        print(f"BREAKPOINT: infinite_stream_cap={cap} completed_in={elapsed:.3f}s")
         assert cap >= floor
 
     @pytest.mark.timing
@@ -150,11 +146,11 @@ class TestAdversarialStream:
         sevs = _stream_events(bus)
         assert sevs[-1].body["status"] == "lease_expired"
 
-    def test_pass_short_circuits_before_chunks_committed(
-            self, adversarial_agent):
+    def test_pass_short_circuits_before_chunks_committed(self, adversarial_agent):
         # An agent that emits exactly [PASS] must produce status=passed
         # with no chat event.
         from loom.adapters import agent_from_send
+
         bus, _state, coord, lease = _streaming_setup()
         agent = agent_from_send("loom", lambda p: "[PASS]")
         run_streaming_call(agent, "<prompt>", lease, bus, coord)
@@ -167,12 +163,12 @@ class TestAdversarialStream:
 # Stream size boundaries.
 # ---------------------------------------------------------------------------
 
-class TestStreamSizeBoundary:
 
+class TestStreamSizeBoundary:
     @pytest.mark.stress
-    def test_single_500kb_chunk_commits_as_one_chat_event(
-            self, adversarial_agent):
+    def test_single_500kb_chunk_commits_as_one_chat_event(self, adversarial_agent):
         from loom.adapters import agent_from_stream
+
         body = "y" * (500 * 1024)
         # P2.1 caps body size at 256 KB by default; explicitly raise to
         # cover the 500 KB stress case. The adversarial test verifies
@@ -187,8 +183,7 @@ class TestStreamSizeBoundary:
         coord = RoomCoordinator(bus, state)
         user_event = ev.chat(sender="user", body="hi")
         bus.post(user_event)
-        plan = plan_for_default("loom", reason="adversarial",
-                                target_event_ids=[user_event.id])
+        plan = plan_for_default("loom", reason="adversarial", target_event_ids=[user_event.id])
         coord.open_user_turn(user_event, plan)
         lease = coord.acquire_lease("loom", user_event.id)
         agent = agent_from_stream("loom", lambda p: [body])
@@ -199,8 +194,7 @@ class TestStreamSizeBoundary:
 
     @pytest.mark.stress
     @pytest.mark.breakpoint
-    def test_breakpoint_chunk_count_when_post_latency_exceeds_200ms(
-            self, adversarial_agent):
+    def test_breakpoint_chunk_count_when_post_latency_exceeds_200ms(self, adversarial_agent):
         # Find chunk count at which run_streaming_call overall latency
         # exceeds 200 ms. Floor: at least 100 chunks. Ceiling: 5000.
         threshold_s = 0.2
@@ -209,8 +203,7 @@ class TestStreamSizeBoundary:
 
         def measure(n_chunks: int) -> float:
             bus, _state, coord, lease = _streaming_setup()
-            agent = adversarial_agent.flood_chunks(
-                "loom", n_chunks=n_chunks, chunk="ab")
+            agent = adversarial_agent.flood_chunks("loom", n_chunks=n_chunks, chunk="ab")
             t0 = time.monotonic()
             run_streaming_call(agent, "<prompt>", lease, bus, coord)
             return time.monotonic() - t0
@@ -231,19 +224,19 @@ class TestStreamSizeBoundary:
 # Actor error recovery — the actor thread keeps running.
 # ---------------------------------------------------------------------------
 
-class TestActorErrorRecovery:
 
-    def test_actor_continues_after_one_draft_failure(self, room_factory,
-                                                      adversarial_agent):
+class TestActorErrorRecovery:
+    def test_actor_continues_after_one_draft_failure(self, room_factory, adversarial_agent):
         # An actor whose first stream raises must not die; the second
         # post should still produce a draft from the working agent.
         from loom.adapters import agent_from_send
         from loom.policy.open_chat import OpenChatPolicy
 
-        long_a = ("bravo sufficient long reply that bypasses both the pass "
-                  "buffer and the loop guard short-text threshold.")
-        a = adversarial_agent.raises_after_chunks(
-            "alpha", n=0, message="first try fails")
+        long_a = (
+            "bravo sufficient long reply that bypasses both the pass "
+            "buffer and the loop guard short-text threshold."
+        )
+        a = adversarial_agent.raises_after_chunks("alpha", n=0, message="first try fails")
         b = agent_from_send("bravo", lambda p: long_a)
 
         room = room_factory(agents=[a, b], policy=OpenChatPolicy())
@@ -256,8 +249,7 @@ class TestActorErrorRecovery:
         assert a_actor._thread is not None
         assert a_actor._thread.is_alive()
 
-    def test_actor_thread_cleanup_on_room_stop(self, room_factory,
-                                                simple_agents):
+    def test_actor_thread_cleanup_on_room_stop(self, room_factory, simple_agents):
         room = room_factory(agents=simple_agents(3))
         actors = list(room.session.actors)
         # Confirm threads exist + are alive.
@@ -269,12 +261,12 @@ class TestActorErrorRecovery:
         for actor in actors:
             assert actor.stopped is True
 
-    def test_actor_error_event_emitted_on_step_exception(
-            self, monkeypatch):
+    def test_actor_error_event_emitted_on_step_exception(self, monkeypatch):
         # Use a stub to drive a step() that raises and observe the
         # actor_error control event on the bus.
         from loom.kernel.actor import ParticipantActor
         from loom.kernel.coordinator import RoomCoordinator
+
         bus = MessageBus()
         state = RoomState(config=RoomConfig())
         state.add_participant(ParticipantInfo(id="loom"))

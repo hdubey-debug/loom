@@ -13,6 +13,7 @@ Invariants this file locks in:
   strings, both of which contain the body verbatim — confirms the
   D2 invariant about audience-scoped rendering.
 """
+
 from __future__ import annotations
 
 import threading
@@ -34,13 +35,16 @@ from tests.property.strategies import participant_ids
 # Sender authentication (Option B)
 # ---------------------------------------------------------------------------
 
-@given(actor_id=participant_ids,
-       forged_sender=st.one_of(
-           st.just("user"),
-           st.just("system"),
-           participant_ids,
-       ),
-       body=st.text(max_size=40))
+
+@given(
+    actor_id=participant_ids,
+    forged_sender=st.one_of(
+        st.just("user"),
+        st.just("system"),
+        participant_ids,
+    ),
+    body=st.text(max_size=40),
+)
 def test_bound_thread_cannot_forge_sender(actor_id, forged_sender, body):
     """Any sender that is not the bound actor id is rejected."""
     if forged_sender == actor_id:
@@ -66,9 +70,9 @@ def test_bound_thread_can_post_own_sender(actor_id, body):
         unbind()
 
 
-@given(actor_id=participant_ids,
-       sender=st.one_of(st.just("user"), st.just("system"),
-                         participant_ids))
+@given(
+    actor_id=participant_ids, sender=st.one_of(st.just("user"), st.just("system"), participant_ids)
+)
 def test_post_internal_bypasses_binding(actor_id, sender):
     """``post_internal`` posts any sender even on a bound thread."""
     bus = MessageBus()
@@ -147,15 +151,13 @@ def test_concurrent_actor_threads_each_see_own_binding():
 # DM privacy
 # ---------------------------------------------------------------------------
 
-@given(target=participant_ids,
-       other=participant_ids,
-       body=st.text(max_size=40))
+
+@given(target=participant_ids, other=participant_ids, body=st.text(max_size=40))
 def test_dm_never_visible_to_non_target(target, other, body):
     if other == target:
         return  # not a privacy violation
     bus = MessageBus()
-    bus.post_internal(ev.chat(
-        sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
+    bus.post_internal(ev.chat(sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
     snap = bus.snapshot(audience=other)
     for e in snap:
         assert e.channel != f"dm:{target}"
@@ -164,15 +166,17 @@ def test_dm_never_visible_to_non_target(target, other, body):
 @given(target=participant_ids, body=st.text(max_size=40))
 def test_dm_visible_to_target_user_system(target, body):
     bus = MessageBus()
-    bus.post_internal(ev.chat(
-        sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
+    bus.post_internal(ev.chat(sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
     for audience in (target, "user", "system"):
         snap = bus.snapshot(audience=audience)
         assert any(e.channel == f"dm:{target}" for e in snap)
 
 
-@given(channel=st.text(min_size=1, max_size=20).filter(
-    lambda s: not s.startswith("dm:") and s != "main"))
+@given(
+    channel=st.text(min_size=1, max_size=20).filter(
+        lambda s: not s.startswith("dm:") and s != "main"
+    )
+)
 def test_unknown_channel_visible_to_nobody(channel):
     """A non-main / non-dm channel is treated as private to nobody."""
     e = ev.chat(sender="user", body="x", channel=channel)
@@ -185,10 +189,12 @@ def test_unknown_channel_visible_to_nobody(channel):
 # Render memo D2 contract
 # ---------------------------------------------------------------------------
 
+
 @given(body=st.text(min_size=1, max_size=40))
 def test_render_memo_distinct_per_scope(body):
     """``main`` and ``dm`` scopes produce distinct, stable cached renders."""
     import json as _json
+
     bus = MessageBus()
     e = ev.chat(sender="alice", body=body)
     bus.post_internal(e, auth=_KERNEL_AUTH)

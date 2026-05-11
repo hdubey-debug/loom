@@ -1,4 +1,5 @@
 """Tests for ``loom.kernel.journal`` — events.jsonl + room_state.json."""
+
 from __future__ import annotations
 
 import json
@@ -81,8 +82,7 @@ class StateSnapshot(unittest.TestCase):
             self.assertEqual(data["default_responder_id"], "claude_code")
             self.assertEqual(data["topic"], "god's existence")
             self.assertEqual(data["last_compacted_event_id"], 42)
-            self.assertEqual({p["id"] for p in data["participants"]},
-                             {"loom", "claude_code"})
+            self.assertEqual({p["id"] for p in data["participants"]}, {"loom", "claude_code"})
             # Mode/debate keys must NOT appear in v2 snapshots.
             self.assertNotIn("mode", data)
             self.assertNotIn("debate", data)
@@ -115,34 +115,46 @@ class StateSnapshot(unittest.TestCase):
     def test_load_returns_none_on_far_future_version(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             j = Journal(tmpdir)
-            (Path(tmpdir) / "room_state.json").write_text(
-                '{"version": 999}'
-            )
+            (Path(tmpdir) / "room_state.json").write_text('{"version": 999}')
             self.assertIsNone(j.load_state())
 
     def test_load_accepts_v1_snapshot(self):
         """v1 snapshots (legacy mode/debate world) are still readable."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
-                "version": 1,
-                "mode": "council",  # legacy: silently ignored on restore
-                "room_epoch": 4,
-                "topic": "stale topic",
-                "anchor_id": None,
-                "chair_id": None,
-                "default_responder_id": "loom",
-                "default_summarizer_id": None,
-                "current_user_turn_id": None,
-                "last_compacted_event_id": 12,
-                "participants": [
-                    {"id": "loom", "capable": True, "cost_tier": 0,
-                     "active": True, "role_hints": {}},
-                ],
-                "debate": {"next_side": "pro", "round": 1,
-                           "max_rounds": 6, "pro_side": [],
-                           "con_side": [], "consecutive_forfeits": 0,
-                           "spoke_this_round": []},
-            }))
+            (Path(tmpdir) / "room_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "mode": "council",  # legacy: silently ignored on restore
+                        "room_epoch": 4,
+                        "topic": "stale topic",
+                        "anchor_id": None,
+                        "chair_id": None,
+                        "default_responder_id": "loom",
+                        "default_summarizer_id": None,
+                        "current_user_turn_id": None,
+                        "last_compacted_event_id": 12,
+                        "participants": [
+                            {
+                                "id": "loom",
+                                "capable": True,
+                                "cost_tier": 0,
+                                "active": True,
+                                "role_hints": {},
+                            },
+                        ],
+                        "debate": {
+                            "next_side": "pro",
+                            "round": 1,
+                            "max_rounds": 6,
+                            "pro_side": [],
+                            "con_side": [],
+                            "consecutive_forfeits": 0,
+                            "spoke_this_round": [],
+                        },
+                    }
+                )
+            )
             j = Journal(tmpdir)
             data = j.load_state()
             self.assertIsNotNone(data)
@@ -162,18 +174,15 @@ class StateSnapshot(unittest.TestCase):
             self.assertIsNotNone(data)
             restored = restore_state(data, RoomConfig())
             self.assertEqual(restored.topic, original.topic)
-            self.assertEqual(restored.default_responder_id,
-                             original.default_responder_id)
-            self.assertEqual(set(restored.participants.keys()),
-                             set(original.participants.keys()))
+            self.assertEqual(restored.default_responder_id, original.default_responder_id)
+            self.assertEqual(set(restored.participants.keys()), set(original.participants.keys()))
 
 
 class LoadEvents(unittest.TestCase):
     def test_round_trip(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with Journal(tmpdir) as j:
-                e = ev.chat(sender="user", body="hi",
-                            addressees=["claude_code"])
+                e = ev.chat(sender="user", body="hi", addressees=["claude_code"])
                 e.id, e.ts = 0, 1.0
                 j.on_event(e)
                 ce = ev.topic_changed(None, "weather")
@@ -192,7 +201,7 @@ class LoadEvents(unittest.TestCase):
                 '{"kind":"chat","sender":"user","body":"good","channel":"main",'
                 '"addressees":[],"room_epoch":0,"user_turn_id":null,"meta":{},'
                 '"id":0,"ts":1.0}\n'
-                'not json\n'
+                "not json\n"
                 '{"kind":"chat","sender":"user","body":"good2","channel":"main",'
                 '"addressees":[],"room_epoch":0,"user_turn_id":null,"meta":{},'
                 '"id":1,"ts":2.0}\n'
@@ -243,8 +252,7 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             original = RoomState(config=cfg)
             original.add_participant(ParticipantInfo(id="loom"))
             original.add_participant(ParticipantInfo(id="claude_code"))
-            original.set_roles({"loom": "teacher",
-                                "claude_code": "quizzer"})
+            original.set_roles({"loom": "teacher", "claude_code": "quizzer"})
             original.set_wait_for_user(True)
             original.set_style("brief")
             original.set_topic("teach derivatives")
@@ -252,9 +260,7 @@ class RoomControlStateRoundTrip(unittest.TestCase):
 
             data = j.load_state()
             restored = restore_state(data, cfg)
-            self.assertEqual(restored.control.roles,
-                             {"loom": "teacher",
-                              "claude_code": "quizzer"})
+            self.assertEqual(restored.control.roles, {"loom": "teacher", "claude_code": "quizzer"})
             self.assertTrue(restored.control.wait_for_user)
             self.assertEqual(restored.control.style, "brief")
             self.assertEqual(restored.topic, "teach derivatives")
@@ -262,18 +268,22 @@ class RoomControlStateRoundTrip(unittest.TestCase):
     def test_legacy_v1_snapshot_without_control_loads_with_defaults(self):
         """v1 snapshots predate ``control``; they must still load."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
-                "version": 1,
-                "room_epoch": 0,
-                "topic": None,
-                "anchor_id": None,
-                "chair_id": None,
-                "default_responder_id": None,
-                "default_summarizer_id": None,
-                "current_user_turn_id": None,
-                "last_compacted_event_id": -1,
-                "participants": [],
-            }))
+            (Path(tmpdir) / "room_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "room_epoch": 0,
+                        "topic": None,
+                        "anchor_id": None,
+                        "chair_id": None,
+                        "default_responder_id": None,
+                        "default_summarizer_id": None,
+                        "current_user_turn_id": None,
+                        "last_compacted_event_id": -1,
+                        "participants": [],
+                    }
+                )
+            )
             j = Journal(tmpdir)
             data = j.load_state()
             restored = restore_state(data, RoomConfig())
@@ -294,32 +304,35 @@ class RoomControlStateRoundTrip(unittest.TestCase):
 
             restored = restore_state(j.load_state(), cfg)
             # v5 schema: a non-empty turn_order is the round-robin signal.
-            self.assertEqual(restored.control.turn_order,
-                             ["loom", "claude_code"])
+            self.assertEqual(restored.control.turn_order, ["loom", "claude_code"])
             self.assertEqual(restored.control.next_speaker_idx, 1)
 
     def test_v2_snapshot_loads_round_robin_defaults(self):
         """v2 snapshots predate the round-robin fields — defaults apply."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
-                "version": 2,
-                "room_epoch": 0,
-                "topic": None,
-                "anchor_id": None,
-                "chair_id": None,
-                "default_responder_id": None,
-                "default_summarizer_id": None,
-                "current_user_turn_id": None,
-                "last_compacted_event_id": -1,
-                "participants": [],
-                "control": {
-                    "roles": {},
-                    "floor_owner": None,
-                    "wait_for_user": False,
-                    "style": "normal",
-                    "active_goal": None,
-                },
-            }))
+            (Path(tmpdir) / "room_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "room_epoch": 0,
+                        "topic": None,
+                        "anchor_id": None,
+                        "chair_id": None,
+                        "default_responder_id": None,
+                        "default_summarizer_id": None,
+                        "current_user_turn_id": None,
+                        "last_compacted_event_id": -1,
+                        "participants": [],
+                        "control": {
+                            "roles": {},
+                            "floor_owner": None,
+                            "wait_for_user": False,
+                            "style": "normal",
+                            "active_goal": None,
+                        },
+                    }
+                )
+            )
             j = Journal(tmpdir)
             restored = restore_state(j.load_state(), RoomConfig())
             self.assertEqual(restored.control.turn_order, [])
@@ -328,28 +341,32 @@ class RoomControlStateRoundTrip(unittest.TestCase):
     def test_corrupt_round_robin_fields_fall_back_to_defaults(self):
         """Malformed round-robin fields must not crash restore."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
-                "version": 3,
-                "room_epoch": 0,
-                "topic": None,
-                "anchor_id": None,
-                "chair_id": None,
-                "default_responder_id": None,
-                "default_summarizer_id": None,
-                "current_user_turn_id": None,
-                "last_compacted_event_id": -1,
-                "participants": [],
-                "control": {
-                    "roles": {},
-                    "floor_owner": None,
-                    "wait_for_user": False,
-                    "style": "normal",
-                    "active_goal": None,
-                    "turn_taking_mode": "garbage",
-                    "turn_order": "not a list",
-                    "next_speaker_idx": "not an int",
-                },
-            }))
+            (Path(tmpdir) / "room_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "room_epoch": 0,
+                        "topic": None,
+                        "anchor_id": None,
+                        "chair_id": None,
+                        "default_responder_id": None,
+                        "default_summarizer_id": None,
+                        "current_user_turn_id": None,
+                        "last_compacted_event_id": -1,
+                        "participants": [],
+                        "control": {
+                            "roles": {},
+                            "floor_owner": None,
+                            "wait_for_user": False,
+                            "style": "normal",
+                            "active_goal": None,
+                            "turn_taking_mode": "garbage",
+                            "turn_order": "not a list",
+                            "next_speaker_idx": "not an int",
+                        },
+                    }
+                )
+            )
             j = Journal(tmpdir)
             restored = restore_state(j.load_state(), RoomConfig())
             # v3/v4 snapshots carrying the retired turn_taking_mode field
@@ -361,27 +378,31 @@ class RoomControlStateRoundTrip(unittest.TestCase):
     def test_v3_snapshot_with_round_robin_mode_carries_turn_order(self):
         """v3 snapshots with `turn_taking_mode=round_robin` restore via turn_order."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
-                "version": 3,
-                "room_epoch": 0,
-                "topic": None,
-                "anchor_id": None,
-                "chair_id": None,
-                "default_responder_id": None,
-                "default_summarizer_id": None,
-                "current_user_turn_id": None,
-                "last_compacted_event_id": -1,
-                "participants": [],
-                "control": {
-                    "roles": {},
-                    "floor_owner": None,
-                    "wait_for_user": False,
-                    "style": "normal",
-                    "turn_taking_mode": "round_robin",
-                    "turn_order": ["a", "b"],
-                    "next_speaker_idx": 1,
-                },
-            }))
+            (Path(tmpdir) / "room_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "room_epoch": 0,
+                        "topic": None,
+                        "anchor_id": None,
+                        "chair_id": None,
+                        "default_responder_id": None,
+                        "default_summarizer_id": None,
+                        "current_user_turn_id": None,
+                        "last_compacted_event_id": -1,
+                        "participants": [],
+                        "control": {
+                            "roles": {},
+                            "floor_owner": None,
+                            "wait_for_user": False,
+                            "style": "normal",
+                            "turn_taking_mode": "round_robin",
+                            "turn_order": ["a", "b"],
+                            "next_speaker_idx": 1,
+                        },
+                    }
+                )
+            )
             j = Journal(tmpdir)
             restored = restore_state(j.load_state(), RoomConfig())
             # The mode field is discarded; turn_order alone signals RR.
@@ -391,25 +412,29 @@ class RoomControlStateRoundTrip(unittest.TestCase):
     def test_corrupt_control_dict_falls_back_to_defaults(self):
         """If ``control`` is malformed, restore_state must not crash."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
-                "version": 2,
-                "room_epoch": 0,
-                "topic": None,
-                "anchor_id": None,
-                "chair_id": None,
-                "default_responder_id": None,
-                "default_summarizer_id": None,
-                "current_user_turn_id": None,
-                "last_compacted_event_id": -1,
-                "participants": [],
-                "control": {
-                    "roles": "not a dict",
-                    "floor_owner": "not a list",
-                    "style": "ultra-brief",  # invalid
-                    "wait_for_user": True,
-                    "active_goal": None,
-                },
-            }))
+            (Path(tmpdir) / "room_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "room_epoch": 0,
+                        "topic": None,
+                        "anchor_id": None,
+                        "chair_id": None,
+                        "default_responder_id": None,
+                        "default_summarizer_id": None,
+                        "current_user_turn_id": None,
+                        "last_compacted_event_id": -1,
+                        "participants": [],
+                        "control": {
+                            "roles": "not a dict",
+                            "floor_owner": "not a list",
+                            "style": "ultra-brief",  # invalid
+                            "wait_for_user": True,
+                            "active_goal": None,
+                        },
+                    }
+                )
+            )
             j = Journal(tmpdir)
             data = j.load_state()
             restored = restore_state(data, RoomConfig())
@@ -482,22 +507,30 @@ class SnapshotCallback(unittest.TestCase):
         # snapshot writer is sleeping for hundreds of ms, on_event
         # returns near-instantly.
         import time
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            payload = {"version": SNAPSHOT_VERSION,
-                       "room_epoch": 1, "topic": None,
-                       "anchor_id": None, "chair_id": None,
-                       "default_responder_id": None,
-                       "default_summarizer_id": None,
-                       "current_user_turn_id": None,
-                       "last_compacted_event_id": -1,
-                       "participants": [],
-                       "control": {
-                           "roles": {}, "floor_owner": None,
-                           "wait_for_user": False, "style": "normal",
-                           "active_goal": None,
-                           "turn_taking_mode": "broadcast",
-                           "turn_order": [], "next_speaker_idx": 0,
-                       }}
+            payload = {
+                "version": SNAPSHOT_VERSION,
+                "room_epoch": 1,
+                "topic": None,
+                "anchor_id": None,
+                "chair_id": None,
+                "default_responder_id": None,
+                "default_summarizer_id": None,
+                "current_user_turn_id": None,
+                "last_compacted_event_id": -1,
+                "participants": [],
+                "control": {
+                    "roles": {},
+                    "floor_owner": None,
+                    "wait_for_user": False,
+                    "style": "normal",
+                    "active_goal": None,
+                    "turn_taking_mode": "broadcast",
+                    "turn_order": [],
+                    "next_speaker_idx": 0,
+                },
+            }
             with Journal(tmpdir, snapshot_every_events=1) as j:
                 # Patch the writer to simulate a slow disk.
                 original = j._write_snapshot_dict
@@ -516,30 +549,38 @@ class SnapshotCallback(unittest.TestCase):
                 j.on_event(e)
                 elapsed = time.monotonic() - t0
                 self.assertLess(
-                    elapsed, 0.1,
-                    f"on_event blocked for {elapsed:.3f}s — "
-                    "snapshot write should be off-thread"
+                    elapsed,
+                    0.1,
+                    f"on_event blocked for {elapsed:.3f}s — snapshot write should be off-thread",
                 )
 
     def test_close_drains_pending_snapshots(self):
         # Multiple snapshots queued, close() must wait for all to land.
         import time
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            payload = {"version": SNAPSHOT_VERSION,
-                       "room_epoch": 0, "topic": None,
-                       "anchor_id": None, "chair_id": None,
-                       "default_responder_id": None,
-                       "default_summarizer_id": None,
-                       "current_user_turn_id": None,
-                       "last_compacted_event_id": -1,
-                       "participants": [],
-                       "control": {
-                           "roles": {}, "floor_owner": None,
-                           "wait_for_user": False, "style": "normal",
-                           "active_goal": None,
-                           "turn_taking_mode": "broadcast",
-                           "turn_order": [], "next_speaker_idx": 0,
-                       }}
+            payload = {
+                "version": SNAPSHOT_VERSION,
+                "room_epoch": 0,
+                "topic": None,
+                "anchor_id": None,
+                "chair_id": None,
+                "default_responder_id": None,
+                "default_summarizer_id": None,
+                "current_user_turn_id": None,
+                "last_compacted_event_id": -1,
+                "participants": [],
+                "control": {
+                    "roles": {},
+                    "floor_owner": None,
+                    "wait_for_user": False,
+                    "style": "normal",
+                    "active_goal": None,
+                    "turn_taking_mode": "broadcast",
+                    "turn_order": [],
+                    "next_speaker_idx": 0,
+                },
+            }
             j = Journal(tmpdir, snapshot_every_events=1)
             j.open()
             try:
@@ -552,9 +593,7 @@ class SnapshotCallback(unittest.TestCase):
                     return original(p)
 
                 j._write_snapshot_dict = slow_write  # type: ignore[assignment]
-                j.set_snapshot_due_callback(
-                    lambda: dict(payload, room_epoch=len(writes) + 1)
-                )
+                j.set_snapshot_due_callback(lambda: dict(payload, room_epoch=len(writes) + 1))
 
                 # Queue a few snapshots in quick succession.
                 for i in range(3):
@@ -623,14 +662,12 @@ class JournalFailureSurface(unittest.TestCase):
         # a ``journal_error`` control event on the bus.
         from loom.runtime import ParticipantWiring, build_loom_session
 
-
         class FakeProxy:
             def stream(self, prompt):
                 yield "ok"
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            wirings = [ParticipantWiring(
-                id="loom", proxy=FakeProxy(), cost_tier=0)]
+            wirings = [ParticipantWiring(id="loom", proxy=FakeProxy(), cost_tier=0)]
             session = build_loom_session(
                 wirings,
                 journal_dir=tmpdir,
@@ -642,7 +679,8 @@ class JournalFailureSurface(unittest.TestCase):
                 session.journal._events_file = _RaisingFile()  # type: ignore[union-attr,assignment]
                 session.bus.post(ev.chat(sender="user", body="hi"))
                 errs = [
-                    e for e in session.bus.snapshot()
+                    e
+                    for e in session.bus.snapshot()
                     if e.kind == "control"
                     and isinstance(e.body, dict)
                     and e.body.get("control_type") == "journal_error"
@@ -718,8 +756,7 @@ class RestoreState(unittest.TestCase):
             # security-model.md).
             self.assertEqual(mock_coord.bus.post_internal.call_count, 1)
             posted_event = mock_coord.bus.post_internal.call_args[0][0]
-            self.assertEqual(posted_event.body.get("control_type"),
-                             "topic_changed")
+            self.assertEqual(posted_event.body.get("control_type"), "topic_changed")
 
     def test_restore_state_missing_room_epoch_defaults_to_zero(self):
         # A snapshot dict with no ``room_epoch`` key (older format or
@@ -750,8 +787,7 @@ class SnapshotQueueBoundedDropOldest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             j = Journal(tmpdir, snapshot_queue_maxsize=2)
             calls: list[tuple[int, int]] = []
-            j.set_snapshot_drop_callback(lambda total, depth:
-                                         calls.append((total, depth)))
+            j.set_snapshot_drop_callback(lambda total, depth: calls.append((total, depth)))
             for i in range(5):
                 j._enqueue_snapshot({"version": 2, "tick": i})
             self.assertEqual(j._snapshot_queue.qsize(), 2)

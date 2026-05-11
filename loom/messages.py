@@ -14,6 +14,7 @@ The two-tier event surface (UX spec §5.3): the full
 :class:`~loom.kernel.events.Event` stays kernel-internal; user-facing
 APIs return :class:`Message` and :class:`TurnResult`.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -111,8 +112,7 @@ class TurnResult:
     turn_id: int = -1
     routing_case: str = ""
     closed_reason: str = "no_turn_opened"
-    participant_responses: dict[str, list[Message]] = field(
-        default_factory=dict)
+    participant_responses: dict[str, list[Message]] = field(default_factory=dict)
     elapsed_s: float = 0.0
 
     def __iter__(self) -> Iterator[Message]:

@@ -7,6 +7,7 @@ the slash-command branches that the four bundled policies' happy paths
 don't hit (e.g. /control, /quiet with unknown ids, /floor with empty
 args), and the user_turn_closed → format_control branches.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,8 +35,10 @@ from loom.runtime import (
 # SendProxyAdapter
 # ---------------------------------------------------------------------------
 
+
 def test_send_proxy_adapter_yields_nothing_when_cancelled():
     """Covers: runtime.py:65-67 — cancelled stream yields nothing."""
+
     class P:
         def send(self, prompt):
             return "hi"
@@ -47,6 +50,7 @@ def test_send_proxy_adapter_yields_nothing_when_cancelled():
 
 def test_send_proxy_adapter_yields_nothing_when_text_empty():
     """Covers: runtime.py:71->exit — empty text yields no chunks."""
+
     class P:
         def send(self, prompt):
             return ""
@@ -57,6 +61,7 @@ def test_send_proxy_adapter_yields_nothing_when_text_empty():
 
 def test_send_proxy_adapter_cancel_handles_missing_cancel_attr():
     """Covers: runtime.py:76-77 — proxy without cancel() attr."""
+
     class P:
         def send(self, prompt):
             return "ok"
@@ -67,9 +72,11 @@ def test_send_proxy_adapter_cancel_handles_missing_cancel_attr():
 
 def test_send_proxy_adapter_cancel_swallows_proxy_cancel_exception():
     """Covers: runtime.py:78-81 — proxy.cancel() raising is swallowed."""
+
     class P:
         def send(self, prompt):
             return "ok"
+
         def cancel(self):
             raise RuntimeError("cancel hates us")
 
@@ -84,12 +91,16 @@ def test_send_proxy_adapter_extract_text_none_returns_empty():
 
 def test_send_proxy_adapter_extract_text_from_object_attribute():
     """Covers: runtime.py:89-92 — attribute extraction (.text/.body/.content/.output)."""
+
     class WithText:
         text = "hello"
+
     class WithBody:
         body = "hello"
+
     class WithContent:
         content = "hello"
+
     class WithOutput:
         output = "hello"
 
@@ -99,6 +110,7 @@ def test_send_proxy_adapter_extract_text_from_object_attribute():
 
 def test_send_proxy_adapter_extract_text_falls_through_to_str():
     """Covers: runtime.py:93 — no recognized attr → str(result)."""
+
     class Obj:
         def __str__(self):
             return "stringified"
@@ -109,6 +121,7 @@ def test_send_proxy_adapter_extract_text_falls_through_to_str():
 # ---------------------------------------------------------------------------
 # Session-stop journal snapshot exception
 # ---------------------------------------------------------------------------
+
 
 def test_session_stop_swallows_journal_snapshot_exception(tmp_path):
     """Covers: runtime.py:220-223 — journal.snapshot raising on stop."""
@@ -121,6 +134,7 @@ def test_session_stop_swallows_journal_snapshot_exception(tmp_path):
         journal_dir=tmp_path,
         policy=OpenChatPolicy(),
     )
+
     # Patch the journal to raise on snapshot during stop.
     def raising(*a, **k):
         raise RuntimeError("snapshot raised")
@@ -132,6 +146,7 @@ def test_session_stop_swallows_journal_snapshot_exception(tmp_path):
 # ---------------------------------------------------------------------------
 # Add/remove agent edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_session_add_agent_after_stop_raises_runtimeerror(tmp_path):
     """Covers: runtime.py:152-153 — add_agent after session.stop() rejects."""
@@ -173,8 +188,10 @@ def test_session_add_agent_without_draft_handler_raises(tmp_path):
 # Slash commands: branches not exercised by happy-path tests
 # ---------------------------------------------------------------------------
 
+
 class _DummyAgent:
     """Minimal proxy that returns a fixed reply."""
+
     def __init__(self, reply: str = "hi"):
         self._reply = reply
 
@@ -194,7 +211,8 @@ def _new_session(tmp_path: Path = None) -> LoomSession:
         ),
     ]
     return build_loom_session(
-        wirings, default_responder_id="alice",
+        wirings,
+        default_responder_id="alice",
         policy=OpenChatPolicy(),
         journal_dir=tmp_path,
     )
@@ -571,11 +589,10 @@ def test_slash_control_dump_no_roles():
 # Format-control branches
 # ---------------------------------------------------------------------------
 
+
 def test_format_control_dead_letter():
     """Covers: runtime.py:686-688 — dead_letter formatting."""
-    e = ev.dead_letter(original_mention_event_id=5,
-                       reason="participant_removed",
-                       reroute_to="bob")
+    e = ev.dead_letter(original_mention_event_id=5, reason="participant_removed", reroute_to="bob")
     out = _format_control(e)
     assert "dead-lettered" in out
     assert "bob" in out
@@ -583,8 +600,7 @@ def test_format_control_dead_letter():
 
 def test_format_control_anchor_chair_summarizer_changed():
     """Covers: runtime.py:692-696 — anchor/chair/summarizer changed."""
-    for ct in ("anchor_changed", "chair_changed",
-               "default_summarizer_changed"):
+    for ct in ("anchor_changed", "chair_changed", "default_summarizer_changed"):
         e = ev._control(ct, old_id="alice", new_id="bob")
         msg = _format_control(e)
         assert msg is not None
@@ -627,13 +643,11 @@ def test_format_control_user_turn_closed_other_reason():
 def test_format_control_internal_kinds_silent():
     """Covers: runtime.py:710-714 — user_turn_opened / obligation_* are silent."""
     e = ev.user_turn_opened(
-        user_turn_id=1, routing_case="direct_mention",
-        required_participants=["a"], rationale="x")
+        user_turn_id=1, routing_case="direct_mention", required_participants=["a"], rationale="x"
+    )
     assert _format_control(e) is None
-    assert _format_control(ev.obligation_recorded(
-        1, "a", "must", [0], "x")) is None
-    assert _format_control(ev.obligation_resolved(
-        1, "a", resolved_by_event_id=2)) is None
+    assert _format_control(ev.obligation_recorded(1, "a", "must", [0], "x")) is None
+    assert _format_control(ev.obligation_resolved(1, "a", resolved_by_event_id=2)) is None
 
 
 def test_format_control_unknown_kind_silent():
@@ -650,8 +664,14 @@ def test_format_control_unknown_kind_silent():
 
 def test_format_control_non_dict_body_returns_none():
     """Covers: runtime.py:681-682 — non-dict body → None."""
-    e = Event(kind="control", body="just a string", sender="kernel",
-              channel="main", addressees=[], room_epoch=0)
+    e = Event(
+        kind="control",
+        body="just a string",
+        sender="kernel",
+        channel="main",
+        addressees=[],
+        room_epoch=0,
+    )
     e.id = 0
     e.ts = 0.0
     assert _format_control(e) is None
@@ -661,12 +681,12 @@ def test_format_control_non_dict_body_returns_none():
 # _make_console_subscriber
 # ---------------------------------------------------------------------------
 
+
 def test_console_subscriber_user_dm_message_emits_dm_line():
     """Covers: runtime.py:723-728 — user DM channel emits dm prefix."""
     captured: List[str] = []
     sub = _make_console_subscriber(captured.append)
-    e = ev.chat(sender="user", body="hi", addressees=["alice"],
-                channel="dm:alice")
+    e = ev.chat(sender="user", body="hi", addressees=["alice"], channel="dm:alice")
     e.id = 0
     e.ts = 0.0
     sub(e)
@@ -677,8 +697,7 @@ def test_console_subscriber_agent_to_agent_dm_silent():
     """Covers: runtime.py:729-730 — agent DM stays silent."""
     captured: List[str] = []
     sub = _make_console_subscriber(captured.append)
-    e = ev.chat(sender="bob", body="hey", addressees=["alice"],
-                channel="dm:alice")
+    e = ev.chat(sender="bob", body="hey", addressees=["alice"], channel="dm:alice")
     e.id = 0
     e.ts = 0.0
     sub(e)
@@ -720,8 +739,10 @@ def test_console_subscriber_stream_events_silent():
 # run_loom_console — end-to-end via injected prompt_fn
 # ---------------------------------------------------------------------------
 
+
 class _ScriptedPrompt:
     """Iterator-like prompt_fn driver with EOFError sentinel."""
+
     def __init__(self, lines: list[str]):
         self._iter = iter(lines)
 
@@ -844,6 +865,7 @@ def test_run_loom_console_default_notify_is_print(capsys):
 # ---------------------------------------------------------------------------
 # post_user_text edge case
 # ---------------------------------------------------------------------------
+
 
 def test_post_user_text_returns_event(tmp_path):
     """Covers: post_user_text returns the posted event (sanity)."""

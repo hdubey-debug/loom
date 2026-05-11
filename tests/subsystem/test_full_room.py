@@ -4,6 +4,7 @@ Drives full LoomRoom instances with up to 30+ agents under various
 real-thread stresses: parallel post_and_wait, EOF mid-stream, journal
 replay across 20 turns, repeated start/stop cycles.
 """
+
 from __future__ import annotations
 
 import io
@@ -25,11 +26,10 @@ from loom.room import LoomRoom
 # Many-agent room.
 # ---------------------------------------------------------------------------
 
-class TestManyAgentRoom:
 
+class TestManyAgentRoom:
     @pytest.mark.stress
-    def test_30_agents_one_turn_completes_within_watchdog(
-            self, room_factory, simple_agents):
+    def test_30_agents_one_turn_completes_within_watchdog(self, room_factory, simple_agents):
         # 30 agents under broadcast policy; one turn must complete.
         agents = simple_agents(30)
         room = room_factory(agents=agents, policy=OpenChatPolicy())
@@ -42,8 +42,7 @@ class TestManyAgentRoom:
         assert len(senders) >= 25
 
     @pytest.mark.stress
-    def test_15_agents_three_consecutive_turns_no_lock_hang(
-            self, room_factory, simple_agents):
+    def test_15_agents_three_consecutive_turns_no_lock_hang(self, room_factory, simple_agents):
         # Three sequential turns must each complete; no progressive
         # lock-contention degradation.
         agents = simple_agents(15)
@@ -61,8 +60,7 @@ class TestManyAgentRoom:
 
     @pytest.mark.stress
     @pytest.mark.breakpoint
-    def test_breakpoint_agent_count_when_post_and_wait_exceeds_5s(
-            self, simple_agents):
+    def test_breakpoint_agent_count_when_post_and_wait_exceeds_5s(self, simple_agents):
         # Find the agent count at which one turn's post_and_wait
         # exceeds 5 s. Floor: at least 5 agents must complete in time.
         # Hard ceiling: 40 agents.
@@ -97,10 +95,9 @@ class TestManyAgentRoom:
 # Console + notify behavior.
 # ---------------------------------------------------------------------------
 
-class TestConsoleAndNotify:
 
-    def test_run_console_thread_safe_notify_serializes_output(
-            self, room_factory):
+class TestConsoleAndNotify:
+    def test_run_console_thread_safe_notify_serializes_output(self, room_factory):
         # The default thread-safe notify wraps print() in a module-level
         # lock; concurrent writes must not interleave (i.e. produce
         # one full line per call).
@@ -152,11 +149,10 @@ class TestConsoleAndNotify:
 # Concurrent post_and_wait.
 # ---------------------------------------------------------------------------
 
-class TestConcurrentPostAndWait:
 
+class TestConcurrentPostAndWait:
     @pytest.mark.timing
-    def test_two_post_and_wait_callers_each_get_consistent_replies(
-            self, room_factory):
+    def test_two_post_and_wait_callers_each_get_consistent_replies(self, room_factory):
         long_a = "alpha sufficient long reply that bypasses loop guard."
         long_b = "bravo sufficient long reply that bypasses loop guard."
         a = agent_from_send("a", lambda p: long_a)
@@ -164,6 +160,7 @@ class TestConcurrentPostAndWait:
         room = room_factory(agents=[a, b], policy=OpenChatPolicy())
 
         from loom import TurnResult
+
         results: list[TurnResult | list] = [[], []]
         errors: list[BaseException] = []
 
@@ -173,10 +170,8 @@ class TestConcurrentPostAndWait:
             except BaseException as exc:
                 errors.append(exc)
 
-        t1 = threading.Thread(target=caller, args=(0, "from caller 1"),
-                              name="caller1")
-        t2 = threading.Thread(target=caller, args=(1, "from caller 2"),
-                              name="caller2")
+        t1 = threading.Thread(target=caller, args=(0, "from caller 1"), name="caller1")
+        t2 = threading.Thread(target=caller, args=(1, "from caller 2"), name="caller2")
         t1.start()
         t2.start()
         t1.join(timeout=15.0)
@@ -188,8 +183,7 @@ class TestConcurrentPostAndWait:
         assert all(isinstance(r, (list, TurnResult)) for r in results)
 
     @pytest.mark.timing
-    def test_post_no_wait_then_post_and_wait_does_not_starve(
-            self, room_factory):
+    def test_post_no_wait_then_post_and_wait_does_not_starve(self, room_factory):
         long_a = "alpha sufficient long reply that bypasses loop guard."
         a = agent_from_send("a", lambda p: long_a)
         room = room_factory(agents=[a], policy=OpenChatPolicy())
@@ -201,8 +195,7 @@ class TestConcurrentPostAndWait:
         replies = room.post_and_wait("second", timeout=10.0)
         # At minimum the bus contains both user posts.
         user_chats = [
-            e for e in room.session.bus.snapshot()
-            if e.kind == "chat" and e.sender == "user"
+            e for e in room.session.bus.snapshot() if e.kind == "chat" and e.sender == "user"
         ]
         bodies = [c.body for c in user_chats]
         assert "first" in bodies
@@ -213,8 +206,8 @@ class TestConcurrentPostAndWait:
 # Journal + replay across many turns.
 # ---------------------------------------------------------------------------
 
-class TestJournalAndReplay:
 
+class TestJournalAndReplay:
     @pytest.mark.disk
     def test_journal_state_after_many_turns_restorable(self, tmp_path):
         # Run several turns with journaling; close, reopen via the
@@ -224,8 +217,10 @@ class TestJournalAndReplay:
 
         def a_send(prompt):
             counter[0] += 1
-            return (f"alpha turn {counter[0]} sufficient long reply that "
-                    f"bypasses both the pass buffer and the loop guard.")
+            return (
+                f"alpha turn {counter[0]} sufficient long reply that "
+                f"bypasses both the pass buffer and the loop guard."
+            )
 
         a = agent_from_send("a", a_send)
         journal_dir = tmp_path / "session"
@@ -264,8 +259,10 @@ class TestJournalAndReplay:
 
         def a_send(prompt):
             counter[0] += 1
-            return (f"alpha turn {counter[0]} sufficient long reply that "
-                    f"bypasses both the pass buffer and the loop guard.")
+            return (
+                f"alpha turn {counter[0]} sufficient long reply that "
+                f"bypasses both the pass buffer and the loop guard."
+            )
 
         a = agent_from_send("a", a_send)
         journal_dir = tmp_path / "session2"
@@ -281,7 +278,8 @@ class TestJournalAndReplay:
         # is present.
         events = Journal(journal_dir).load_events()
         opened = [
-            e for e in events
+            e
+            for e in events
             if e.kind == "control"
             and isinstance(e.body, dict)
             and e.body.get("control_type") == "user_turn_opened"
@@ -297,8 +295,8 @@ class TestJournalAndReplay:
 # Lifecycle stress — repeated start/stop.
 # ---------------------------------------------------------------------------
 
-class TestLifecycleStress:
 
+class TestLifecycleStress:
     def test_start_stop_5_cycles_no_thread_leak(self):
         # Construct, start, stop a fresh room 5 times. The autouse
         # ``assert_no_thread_leak`` fixture would catch any actor
@@ -310,9 +308,9 @@ class TestLifecycleStress:
             b = agent_from_send("b", lambda p: long_a)
             room = LoomRoom(agents=[a, b], policy=OpenChatPolicy())
             room.start()
-            assert all(act._thread is not None
-                       and act._thread.is_alive()
-                       for act in room.session.actors)
+            assert all(
+                act._thread is not None and act._thread.is_alive() for act in room.session.actors
+            )
             room.stop(timeout=5.0)
             assert all(act.stopped for act in room.session.actors)
             assert room.session.bus.stopped

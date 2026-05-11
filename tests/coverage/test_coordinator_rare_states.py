@@ -6,6 +6,7 @@ obligation rerouting, lease validation when expired/missing,
 _lookup_event linear-scan branch, and the ``empty allowed_speakers``
 fallback in acquire_lease.
 """
+
 from __future__ import annotations
 
 import time
@@ -31,6 +32,7 @@ from loom.kernel.room import ParticipantInfo, RoomConfig, RoomState
 # ---------------------------------------------------------------------------
 # LoopGuardConfig, ThrottleConfig, BudgetConfig — small classes
 # ---------------------------------------------------------------------------
+
 
 def test_loop_guard_iou_both_empty_returns_one():
     """Covers: coordinator.py:129-130 — _iou(empty, empty) → 1.0."""
@@ -72,15 +74,14 @@ def test_budget_used_returns_recorded():
 # Coordinator setup helper
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def coord_with_two():
     bus = MessageBus()
     state = RoomState(config=RoomConfig())
     coord = RoomCoordinator(bus, state)
-    coord.register_participant(
-        ParticipantInfo(id="alice", capable=True, cost_tier=1))
-    coord.register_participant(
-        ParticipantInfo(id="bob", capable=True, cost_tier=1))
+    coord.register_participant(ParticipantInfo(id="alice", capable=True, cost_tier=1))
+    coord.register_participant(ParticipantInfo(id="bob", capable=True, cost_tier=1))
     yield bus, coord, state
     bus.stop()
 
@@ -88,6 +89,7 @@ def coord_with_two():
 # ---------------------------------------------------------------------------
 # RoomCoordinator: properties + slot setter idempotence
 # ---------------------------------------------------------------------------
+
 
 def test_budget_property_returns_internal_budget(coord_with_two):
     """Covers: coordinator.py:242-244 — budget property accessor."""
@@ -172,20 +174,22 @@ def test_set_style_same_value_short_circuits(coord_with_two):
 # Obligation rerouting: skip non-must/should obligations
 # ---------------------------------------------------------------------------
 
+
 def test_unregister_skips_other_obligations_during_reroute(coord_with_two):
     """Covers: coordinator.py:350-353 — non-target / non-must obligations skipped."""
     bus, coord, _state = coord_with_two
     coord.set_default_responder("bob")
     user_event = ev.chat(
-        sender="user", body="@alice respond",
-        addressees=["alice"], room_epoch=0,
+        sender="user",
+        body="@alice respond",
+        addressees=["alice"],
+        room_epoch=0,
     )
     coord.post_user_event_and_open_turn(
         user_event,
         lambda posted: plan_for_default(
-            "alice", reason="direct_mention",
-            target_event_ids=[posted.id],
-            rationale="@alice"),
+            "alice", reason="direct_mention", target_event_ids=[posted.id], rationale="@alice"
+        ),
     )
     # Inject a `may`-level obligation for bob that should be SKIPPED on reroute
     # (only must/should obligations transfer).
@@ -208,6 +212,7 @@ def test_unregister_skips_other_obligations_during_reroute(coord_with_two):
 # obligation_for, _resolve_obligation_locked: no-turn early returns
 # ---------------------------------------------------------------------------
 
+
 def test_obligation_for_with_no_turn_returns_none(coord_with_two):
     """Covers: coordinator.py:809-810 — obligation_for early return."""
     _bus, coord, _state = coord_with_two
@@ -226,6 +231,7 @@ def test_resolve_obligation_with_no_turn_is_noop(coord_with_two):
 # acquire_lease — fallback path when allowed_speakers is empty
 # ---------------------------------------------------------------------------
 
+
 def test_acquire_lease_with_empty_allowed_speakers_fallback(coord_with_two):
     """Covers: coordinator.py:874-878 — empty allowed_speakers fallback path."""
     bus, coord, _state = coord_with_two
@@ -234,15 +240,14 @@ def test_acquire_lease_with_empty_allowed_speakers_fallback(coord_with_two):
     plan = UserTurnPlan(
         requires_response=False,
         required_participants=[],
-        optional_participants=["alice"],   # alice eligible via optional
-        allowed_speakers=set(),            # empty set triggers fallback
+        optional_participants=["alice"],  # alice eligible via optional
+        allowed_speakers=set(),  # empty set triggers fallback
         obligations=[],
         routing_case="multi_opinion",
         rationale="x",
     )
 
-    user_event = ev.chat(
-        sender="user", body="hi", addressees=[], room_epoch=0)
+    user_event = ev.chat(sender="user", body="hi", addressees=[], room_epoch=0)
     coord.post_user_event_and_open_turn(user_event, lambda _e: plan)
 
     # alice is in optional_participants → acquire_lease should succeed
@@ -266,8 +271,7 @@ def test_acquire_lease_empty_allowed_no_obligation_rejected(coord_with_two):
         rationale="x",
     )
 
-    user_event = ev.chat(
-        sender="user", body="hi", addressees=[], room_epoch=0)
+    user_event = ev.chat(sender="user", body="hi", addressees=[], room_epoch=0)
     coord.post_user_event_and_open_turn(user_event, lambda _e: plan)
 
     # alice not allowed via any branch.
@@ -277,13 +281,12 @@ def test_acquire_lease_empty_allowed_no_obligation_rejected(coord_with_two):
 def test_acquire_lease_budget_exceeded_returns_none(coord_with_two):
     """Covers: coordinator.py:905-906 — budget rejects."""
     bus, coord, _state = coord_with_two
-    user_event = ev.chat(
-        sender="user", body="@alice", addressees=["alice"], room_epoch=0)
+    user_event = ev.chat(sender="user", body="@alice", addressees=["alice"], room_epoch=0)
     coord.post_user_event_and_open_turn(
         user_event,
         lambda e: plan_for_default(
-            "alice", reason="direct_mention",
-            target_event_ids=[e.id], rationale="@alice"),
+            "alice", reason="direct_mention", target_event_ids=[e.id], rationale="@alice"
+        ),
     )
     # Pre-fill the budget so the next acquire_lease is rejected.
     ut = coord._user_turn
@@ -295,14 +298,19 @@ def test_acquire_lease_budget_exceeded_returns_none(coord_with_two):
 # validate_lease — edge cases
 # ---------------------------------------------------------------------------
 
+
 def test_validate_lease_returns_false_when_lease_id_missing(coord_with_two):
     """Covers: coordinator.py:926-927 — lease.id not in self._leases."""
     bus, coord, _state = coord_with_two
     # Construct a fake lease that was never registered.
     fake = TurnLease(
-        id=12345, holder="alice", user_turn_id=0,
-        trigger_event_id=0, room_epoch=0,
-        acquired_at=time.time(), expires_at=time.time() + 100,
+        id=12345,
+        holder="alice",
+        user_turn_id=0,
+        trigger_event_id=0,
+        room_epoch=0,
+        acquired_at=time.time(),
+        expires_at=time.time() + 100,
     )
     assert coord.validate_lease(fake) is False
 
@@ -311,9 +319,13 @@ def test_validate_lease_with_invalid_already_returns_false(coord_with_two):
     """Covers: coordinator.py:924-925 — lease.valid is False short-circuit."""
     bus, coord, _state = coord_with_two
     fake = TurnLease(
-        id=99, holder="alice", user_turn_id=0,
-        trigger_event_id=0, room_epoch=0,
-        acquired_at=0.0, expires_at=0.0,
+        id=99,
+        holder="alice",
+        user_turn_id=0,
+        trigger_event_id=0,
+        room_epoch=0,
+        acquired_at=0.0,
+        expires_at=0.0,
     )
     fake.valid = False
     assert coord.validate_lease(fake) is False
@@ -322,6 +334,7 @@ def test_validate_lease_with_invalid_already_returns_false(coord_with_two):
 # ---------------------------------------------------------------------------
 # _close_user_turn_locked: short-circuit on no turn / closed
 # ---------------------------------------------------------------------------
+
 
 def test_close_user_turn_locked_when_no_turn_short_circuits(coord_with_two):
     """Covers: coordinator.py:725-727 — _close_user_turn_locked early return."""
@@ -333,6 +346,7 @@ def test_close_user_turn_locked_when_no_turn_short_circuits(coord_with_two):
 # ---------------------------------------------------------------------------
 # _lookup_event linear-scan branch
 # ---------------------------------------------------------------------------
+
 
 def test_lookup_event_with_none_id_returns_none(coord_with_two):
     """Covers: coordinator.py:1023-1024 — _lookup_event(None) → None."""
@@ -377,6 +391,7 @@ def test_lookup_event_returns_none_for_unknown_id(coord_with_two):
 # fix from the last pass is still in place. (Doesn't add line coverage but
 # is cheap protection against regression.)
 # ---------------------------------------------------------------------------
+
 
 def test_subscriber_observed_events_in_strict_id_order(coord_with_two):
     """Sanity: subscribers see events in monotonic id order under coord lock."""

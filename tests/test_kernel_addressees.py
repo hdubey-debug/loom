@@ -5,6 +5,7 @@ behavior is also covered (with more edge cases) by
 ``test_kernel_interpreter.py`` for as long as ``interpreter.parse_addressees``
 remains a back-compat alias.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -76,8 +77,7 @@ class LastResponsibleSpeaker(unittest.TestCase):
     def test_respects_channel_filter(self):
         bus = MessageBus()
         bus.post(ev.chat(sender="loom", body="public"))
-        bus.post(ev.chat(sender="claude_code", body="dm",
-                         channel="dm:user"))
+        bus.post(ev.chat(sender="claude_code", body="dm", channel="dm:user"))
         self.assertEqual(
             last_responsible_speaker(bus, channel="main"),
             "loom",
@@ -123,15 +123,15 @@ class LastResponsibleSpeaker(unittest.TestCase):
     def test_non_chat_events_do_not_affect_result(self):
         bus = MessageBus()
         bus.post(ev.chat(sender="loom", body="hello"))
-        bus.post(ev.user_turn_opened(
-            user_turn_id=1,
-            routing_case="multi_opinion",
-            required_participants=["claude_code"],
-        ))
-        bus.post(ev.stream_start(lease_id=1, participant_id="claude_code",
-                                 trigger_event_id=0))
-        bus.post(ev.stream_delta(lease_id=1, participant_id="claude_code",
-                                 text="hi"))
+        bus.post(
+            ev.user_turn_opened(
+                user_turn_id=1,
+                routing_case="multi_opinion",
+                required_participants=["claude_code"],
+            )
+        )
+        bus.post(ev.stream_start(lease_id=1, participant_id="claude_code", trigger_event_id=0))
+        bus.post(ev.stream_delta(lease_id=1, participant_id="claude_code", text="hi"))
         bus.post(ev.system(body="something"))
         self.assertEqual(last_responsible_speaker(bus), "loom")
 

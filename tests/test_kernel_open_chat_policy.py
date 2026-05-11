@@ -3,6 +3,7 @@
 The simplest broadcast policy — every active capable participant gets
 a ``must`` obligation. Empty room ⇒ no-response plan.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -15,8 +16,7 @@ from loom.policy.open_chat import OpenChatPolicy
 def _state(*pids_with_active: tuple[str, bool, bool]) -> RoomState:
     state = RoomState(config=RoomConfig())
     for pid, active, capable in pids_with_active:
-        state.add_participant(
-            ParticipantInfo(id=pid, active=active, capable=capable))
+        state.add_participant(ParticipantInfo(id=pid, active=active, capable=capable))
     return state
 
 
@@ -50,7 +50,6 @@ class OpenChatBroadcast(unittest.TestCase):
 
 
 class OpenChatEdgeCases(unittest.TestCase):
-
     def test_empty_room_no_response(self):
         state = _state()
         e = ev.chat(sender="user", body="hello?")
@@ -72,8 +71,8 @@ class OpenChatEdgeCases(unittest.TestCase):
     def test_inactive_participants_excluded(self):
         state = _state(
             ("loom", True, True),
-            ("ghost", False, True),     # inactive
-            ("dumb", True, False),       # not capable
+            ("ghost", False, True),  # inactive
+            ("dumb", True, False),  # not capable
         )
         e = ev.chat(sender="user", body="who's home")
         plan = OpenChatPolicy().plan_user_turn(e, state)

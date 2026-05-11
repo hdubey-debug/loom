@@ -1,4 +1,5 @@
 """Tests for :class:`loom.policy.single_responder.SingleResponderPolicy`."""
+
 from __future__ import annotations
 
 import unittest
@@ -11,13 +12,11 @@ from loom.policy.single_responder import SingleResponderPolicy
 def _state(*pids_with_active: tuple[str, bool, bool]) -> RoomState:
     state = RoomState(config=RoomConfig())
     for pid, active, capable in pids_with_active:
-        state.add_participant(
-            ParticipantInfo(id=pid, active=active, capable=capable))
+        state.add_participant(ParticipantInfo(id=pid, active=active, capable=capable))
     return state
 
 
 class SingleResponderRouting(unittest.TestCase):
-
     def test_routes_to_configured_responder(self):
         state = _state(("loom", True, True), ("claude", True, True))
         e = ev.chat(sender="user", body="hi everyone")
@@ -50,7 +49,6 @@ class SingleResponderRouting(unittest.TestCase):
 
 
 class SingleResponderEdgeCases(unittest.TestCase):
-
     def test_responder_not_in_room_returns_no_response(self):
         state = _state(("claude", True, True))
         e = ev.chat(sender="user", body="hi")

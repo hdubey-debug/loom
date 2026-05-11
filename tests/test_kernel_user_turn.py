@@ -1,4 +1,5 @@
 """Tests for ``loom.kernel.user_turn`` — UserTurn + obligation bookkeeping."""
+
 from __future__ import annotations
 
 import unittest
@@ -16,11 +17,14 @@ from loom.kernel.user_turn import (
 )
 
 
-def _plan_for(*ids: str, optional: tuple[str, ...] = (),
-              routing_case: str = "direct_mention") -> UserTurnPlan:
+def _plan_for(
+    *ids: str, optional: tuple[str, ...] = (), routing_case: str = "direct_mention"
+) -> UserTurnPlan:
     plan = plan_with_required(
-        list(ids), routing_case=routing_case,  # type: ignore[arg-type]
-        target_event_ids=[10], reason="test",
+        list(ids),
+        routing_case=routing_case,  # type: ignore[arg-type]
+        target_event_ids=[10],
+        reason="test",
         optional=list(optional),
     )
     return plan
@@ -29,14 +33,12 @@ def _plan_for(*ids: str, optional: tuple[str, ...] = (),
 class MakeUserTurn(unittest.TestCase):
     def test_assigns_obligation_ids(self):
         plan = _plan_for("a", "b")
-        turn, next_id = make_user_turn(turn_id=1, user_event_id=10,
-                                       plan=plan,
-                                       started_at=100.0,
-                                       next_obligation_id=1)
+        turn, next_id = make_user_turn(
+            turn_id=1, user_event_id=10, plan=plan, started_at=100.0, next_obligation_id=1
+        )
         self.assertEqual(next_id, 3)
         self.assertEqual(set(turn.obligations.keys()), {1, 2})
-        self.assertEqual(set(o.participant_id for o in turn.obligations.values()),
-                         {"a", "b"})
+        self.assertEqual(set(o.participant_id for o in turn.obligations.values()), {"a", "b"})
 
     def test_required_optional_views(self):
         plan = _plan_for("a", optional=("b",))
@@ -98,18 +100,26 @@ class MarkObligationResolved(unittest.TestCase):
     def test_resolve_unknown_obligation_returns_false(self):
         plan = _plan_for("loom")
         turn, _ = make_user_turn(1, 10, plan, started_at=100.0)
-        self.assertFalse(turn.mark_obligation_resolved(
-            obligation_id=999, by_event_id=99, now=101.0,
-        ))
+        self.assertFalse(
+            turn.mark_obligation_resolved(
+                obligation_id=999,
+                by_event_id=99,
+                now=101.0,
+            )
+        )
 
     def test_resolve_already_resolved_returns_false(self):
         plan = _plan_for("loom")
         turn, _ = make_user_turn(1, 10, plan, started_at=100.0)
         oid = next(iter(turn.obligations))
         turn.mark_obligation_resolved(oid, by_event_id=99, now=101.0)
-        self.assertFalse(turn.mark_obligation_resolved(
-            oid, by_event_id=100, now=102.0,
-        ))
+        self.assertFalse(
+            turn.mark_obligation_resolved(
+                oid,
+                by_event_id=100,
+                now=102.0,
+            )
+        )
 
 
 class UnresolvedRequired(unittest.TestCase):
@@ -121,8 +131,7 @@ class UnresolvedRequired(unittest.TestCase):
     def test_resolves_drop_from_set(self):
         plan = _plan_for("a", "b")
         turn, _ = make_user_turn(1, 10, plan, started_at=100.0)
-        oid_a = next(o.id for o in turn.obligations.values()
-                     if o.participant_id == "a")
+        oid_a = next(o.id for o in turn.obligations.values() if o.participant_id == "a")
         turn.mark_obligation_resolved(oid_a, by_event_id=42, now=101.0)
         self.assertEqual(turn.unresolved_required(), {"b"})
 
@@ -144,8 +153,7 @@ class IsUserTurnComplete(unittest.TestCase):
     def test_incomplete_with_one_open(self):
         plan = _plan_for("a", "b")
         turn, _ = make_user_turn(1, 10, plan, started_at=100.0)
-        oid_a = next(o.id for o in turn.obligations.values()
-                     if o.participant_id == "a")
+        oid_a = next(o.id for o in turn.obligations.values() if o.participant_id == "a")
         turn.mark_obligation_resolved(oid_a, by_event_id=42, now=101.0)
         self.assertFalse(is_user_turn_complete(turn))
 
@@ -206,7 +214,10 @@ class CloseAndIdle(unittest.TestCase):
         turn, _ = make_user_turn(1, 10, plan, started_at=100.0)
         targets = [10]
         ob, next_id = turn.add_obligation(
-            "b", "must", targets, "rerouted_from_a",
+            "b",
+            "must",
+            targets,
+            "rerouted_from_a",
             next_obligation_id=7,
         )
         targets.append(11)
@@ -220,23 +231,22 @@ class CloseAndIdle(unittest.TestCase):
 
 class Debounce(unittest.TestCase):
     def test_first_post_always_opens_new_turn(self):
-        self.assertTrue(should_open_new_user_turn(None, now=100.0,
-                                                  debounce_ms=250))
+        self.assertTrue(should_open_new_user_turn(None, now=100.0, debounce_ms=250))
 
     def test_within_debounce_appends(self):
-        self.assertFalse(should_open_new_user_turn(prev_user_post_ts=100.0,
-                                                   now=100.1,
-                                                   debounce_ms=250))
+        self.assertFalse(
+            should_open_new_user_turn(prev_user_post_ts=100.0, now=100.1, debounce_ms=250)
+        )
 
     def test_past_debounce_opens_new(self):
-        self.assertTrue(should_open_new_user_turn(prev_user_post_ts=100.0,
-                                                  now=100.4,
-                                                  debounce_ms=250))
+        self.assertTrue(
+            should_open_new_user_turn(prev_user_post_ts=100.0, now=100.4, debounce_ms=250)
+        )
 
     def test_exact_debounce_boundary_opens_new(self):
-        self.assertTrue(should_open_new_user_turn(prev_user_post_ts=100.0,
-                                                  now=100.25,
-                                                  debounce_ms=250))
+        self.assertTrue(
+            should_open_new_user_turn(prev_user_post_ts=100.0, now=100.25, debounce_ms=250)
+        )
 
 
 if __name__ == "__main__":

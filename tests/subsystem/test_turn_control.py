@@ -5,6 +5,7 @@ under concurrent access: many threads posting at once, lease churn
 during membership changes, lease-TTL expiry, dead-letter routing, and
 the user-turn debounce window.
 """
+
 from __future__ import annotations
 
 import time
@@ -29,16 +30,22 @@ from loom.kernel.room import (
 # Helpers (kept local — these tests own a coordinator end-to-end).
 # ---------------------------------------------------------------------------
 
-def _build(default_responder="loom",
-           members=("loom", "claude_code", "gemini_cli"),
-           config=None,
-           lift_throttle=True):
+
+def _build(
+    default_responder="loom",
+    members=("loom", "claude_code", "gemini_cli"),
+    config=None,
+    lift_throttle=True,
+):
     bus = MessageBus()
-    state = RoomState(config=config or RoomConfig(
-        user_turn_idle_timeout_s=20,
-        user_turn_debounce_ms=200,
-        lease_ttl_s=60,
-    ))
+    state = RoomState(
+        config=config
+        or RoomConfig(
+            user_turn_idle_timeout_s=20,
+            user_turn_debounce_ms=200,
+            lease_ttl_s=60,
+        )
+    )
     for i, pid in enumerate(members):
         state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
     if default_responder:
@@ -49,6 +56,7 @@ def _build(default_responder="loom",
         # default per-participant rate cap. Lifting the throttle here
         # isolates *coordinator* behavior from *throttle* behavior.
         from loom.kernel.coordinator import ThrottleConfig as _Throttle
+
         coord._throttle = _Throttle(
             per_participant_per_min=10_000,
             per_channel_per_min=10_000,
@@ -57,8 +65,7 @@ def _build(default_responder="loom",
 
 
 def _open_default(c, e, default_id):
-    plan = plan_for_default(default_id, reason="test",
-                            target_event_ids=[e.id])
+    plan = plan_for_default(default_id, reason="test", target_event_ids=[e.id])
     return c.open_user_turn(e, plan)
 
 
@@ -72,14 +79,15 @@ def _post_user(bus, body="hi"):
 # Concurrent posting onto the coordinator.
 # ---------------------------------------------------------------------------
 
-class TestConcurrentPosts:
 
+class TestConcurrentPosts:
     @pytest.mark.timing
     def test_concurrent_posts_serialize_through_rlock(self, thread_harness):
         # 50 threads each call ``post_user_event_and_open_turn`` with a
         # classifier that always returns an acknowledgement. The
         # coordinator's RLock serializes them; every event lands.
         from loom.kernel.obligations import plan_for_acknowledgement
+
         bus, state, c = _build()
         n_posts = 50
 
@@ -91,8 +99,7 @@ class TestConcurrentPosts:
             c.post_user_event_and_open_turn(e, classify)
 
         for i in range(n_posts):
-            thread_harness.spawn(lambda i=i: post_one(i),
-                                  name=f"post{i}")
+            thread_harness.spawn(lambda i=i: post_one(i), name=f"post{i}")
         thread_harness.join_all(timeout=10.0)
         assert thread_harness.errors == []
 
@@ -102,16 +109,14 @@ class TestConcurrentPosts:
         assert ids == list(range(ids[0], ids[0] + n_posts))
 
     @pytest.mark.timing
-    def test_post_user_event_and_open_turn_is_atomic_under_concurrency(
-            self, thread_harness):
+    def test_post_user_event_and_open_turn_is_atomic_under_concurrency(self, thread_harness):
         # The (post + classify + open_user_turn) path must run under
         # the same lock so an actor woken by the bus post never sees
         # ``user_turn=None`` for an event whose turn is in flight.
         bus, state, c = _build(default_responder="loom")
 
         def classify(event):
-            return plan_for_default("loom", reason="atomic",
-                                    target_event_ids=[event.id])
+            return plan_for_default("loom", reason="atomic", target_event_ids=[event.id])
 
         races_seen = []
 
@@ -119,8 +124,7 @@ class TestConcurrentPosts:
             # Sample the (latest user-event id, current user_turn) pair
             # while posters churn. They must always agree.
             for _ in range(200):
-                snap = [e for e in bus.snapshot() if e.kind == "chat"
-                        and e.sender == "user"]
+                snap = [e for e in bus.snapshot() if e.kind == "chat" and e.sender == "user"]
                 if snap:
                     last = snap[-1]
                     ut = c.user_turn
@@ -135,9 +139,10 @@ class TestConcurrentPosts:
         for i in range(20):
             thread_harness.spawn(
                 lambda i=i: c.post_user_event_and_open_turn(
-                    ev.chat(sender="user", body=f"q{i}"),
-                    classify),
-                name=f"poster{i}")
+                    ev.chat(sender="user", body=f"q{i}"), classify
+                ),
+                name=f"poster{i}",
+            )
         thread_harness.join_all(timeout=10.0)
         assert thread_harness.errors == []
         # No half-open observation slipped through.
@@ -148,8 +153,8 @@ class TestConcurrentPosts:
 # Lease lifecycle under churn.
 # ---------------------------------------------------------------------------
 
-class TestLeaseLifecycleUnderChurn:
 
+class TestLeaseLifecycleUnderChurn:
     @pytest.mark.stress
     def test_register_unregister_during_active_turn_no_zombie_lease(self):
         # Spinning a participant register/unregister cycle while a turn
@@ -186,15 +191,16 @@ class TestLeaseLifecycleUnderChurn:
         plan = plan_with_required(
             ["loom", "claude_code"],
             routing_case="multi_opinion",
-            target_event_ids=[e.id], reason="test",
+            target_event_ids=[e.id],
+            reason="test",
             max_responses=1,
         )
         c.open_user_turn(e, plan)
         l1 = c.acquire_lease("loom", e.id)
         assert l1 is not None
-        c.on_stream_end(l1, "committed",
-                        committed_text="long enough committed reply",
-                        cost_tokens=10)
+        c.on_stream_end(
+            l1, "committed", committed_text="long enough committed reply", cost_tokens=10
+        )
         c.release_lease(l1)
         # Cap is reached — claude_code is rejected.
         l2 = c.acquire_lease("claude_code", e.id)
@@ -205,8 +211,7 @@ class TestLeaseLifecycleUnderChurn:
         # Use the simulated-expiry trick (override lease.expires_at)
         # from existing tests so this stays sub-second. P3.3:
         # lease.expires_at is now monotonic-clock; use the same.
-        bus, state, c = _build(default_responder="loom",
-                               config=RoomConfig(lease_ttl_s=60))
+        bus, state, c = _build(default_responder="loom", config=RoomConfig(lease_ttl_s=60))
         e = _post_user(bus, "hi")
         _open_default(c, e, "loom")
         lease = c.acquire_lease("loom", e.id)
@@ -233,8 +238,8 @@ class TestLeaseLifecycleUnderChurn:
 # Turn integrity under load.
 # ---------------------------------------------------------------------------
 
-class TestTurnIntegrity:
 
+class TestTurnIntegrity:
     @pytest.mark.stress
     def test_50_back_to_back_turns_no_obligation_leaks(self):
         # Open + close 50 turns in a tight loop. After each, the
@@ -246,9 +251,9 @@ class TestTurnIntegrity:
             _open_default(c, e, "loom")
             lease = c.acquire_lease("loom", e.id)
             assert lease is not None
-            c.on_stream_end(lease, "committed",
-                            committed_text=f"committed reply {i} long enough",
-                            cost_tokens=5)
+            c.on_stream_end(
+                lease, "committed", committed_text=f"committed reply {i} long enough", cost_tokens=5
+            )
             c.release_lease(lease)
         ut = c.user_turn
         assert ut is not None
@@ -272,8 +277,10 @@ class TestTurnIntegrity:
             bus, state, c = _build(members=members, default_responder=None)
             e = _post_user(bus, "q")
             plan = plan_with_required(
-                members, routing_case="multi_opinion",
-                target_event_ids=[e.id], reason="bp",
+                members,
+                routing_case="multi_opinion",
+                target_event_ids=[e.id],
+                reason="bp",
                 max_responses=0,  # unlimited
             )
             c.open_user_turn(e, plan)
@@ -286,9 +293,9 @@ class TestTurnIntegrity:
             elapsed = time.monotonic() - t0
             # Cleanup.
             for lease in leases:
-                c.on_stream_end(lease, "committed",
-                                committed_text="ok long enough committed",
-                                cost_tokens=1)
+                c.on_stream_end(
+                    lease, "committed", committed_text="ok long enough committed", cost_tokens=1
+                )
                 c.release_lease(lease)
             assert len(leases) == n
             return elapsed
@@ -308,9 +315,11 @@ class TestTurnIntegrity:
         # Single-required participant turn; remove that participant
         # with no other capable agent in the room. The kernel emits a
         # ``dead_letter`` (no reroute_to) and the turn closes.
-        bus, state, c = _build(default_responder="loom",
-                               members=("loom",))  # only one agent
-        e = _post_user(bus, "@loom hi", )
+        bus, state, c = _build(default_responder="loom", members=("loom",))  # only one agent
+        e = _post_user(
+            bus,
+            "@loom hi",
+        )
         _open_default(c, e, "loom")
         # Now remove loom entirely. There's no fallback.
         c.unregister_participant("loom")
@@ -329,8 +338,8 @@ class TestTurnIntegrity:
 # Debounce window behavior.
 # ---------------------------------------------------------------------------
 
-class TestDebounceWindow:
 
+class TestDebounceWindow:
     @pytest.mark.timing
     def test_zero_debounce_opens_a_new_turn_for_every_post(self):
         # With ``user_turn_debounce_ms=0`` and the prior turn closed,
@@ -339,23 +348,21 @@ class TestDebounceWindow:
         bus, state, c = _build(default_responder="loom", config=cfg)
 
         def classify(event):
-            return plan_for_default("loom", reason="t",
-                                    target_event_ids=[event.id])
+            return plan_for_default("loom", reason="t", target_event_ids=[event.id])
 
         # Post #1: opens turn 0, lease acquired and committed → turn closes.
         e1 = ev.chat(sender="user", body="one")
         c.post_user_event_and_open_turn(e1, classify)
         first_turn_id = c.user_turn.id
         lease = c.acquire_lease("loom", e1.id)
-        c.on_stream_end(lease, "committed",
-                        committed_text="long enough committed reply",
-                        cost_tokens=5)
+        c.on_stream_end(
+            lease, "committed", committed_text="long enough committed reply", cost_tokens=5
+        )
         c.release_lease(lease)
         assert c.user_turn.state == "closed"
 
         # Post #2: must open a brand-new turn id (zero debounce, no merge).
-        c.post_user_event_and_open_turn(
-            ev.chat(sender="user", body="two"), classify)
+        c.post_user_event_and_open_turn(ev.chat(sender="user", body="two"), classify)
         second_turn_id = c.user_turn.id
         assert second_turn_id != first_turn_id
 
@@ -367,8 +374,7 @@ class TestDebounceWindow:
         bus, state, c = _build(default_responder="loom", config=cfg)
 
         def classify(event):
-            return plan_for_default("loom", reason="t",
-                                    target_event_ids=[event.id])
+            return plan_for_default("loom", reason="t", target_event_ids=[event.id])
 
         e1 = ev.chat(sender="user", body="one")
         c.post_user_event_and_open_turn(e1, classify)
@@ -392,14 +398,11 @@ class TestDebounceWindow:
         bus, state, c = _build(default_responder="loom", config=cfg)
 
         def classify(event):
-            return plan_for_default("loom", reason="t",
-                                    target_event_ids=[event.id])
+            return plan_for_default("loom", reason="t", target_event_ids=[event.id])
 
-        c.post_user_event_and_open_turn(
-            ev.chat(sender="user", body="one"), classify)
+        c.post_user_event_and_open_turn(ev.chat(sender="user", body="one"), classify)
         for n in range(3):
-            c.post_user_event_and_open_turn(
-                ev.chat(sender="user", body=f"more-{n}"), classify)
+            c.post_user_event_and_open_turn(ev.chat(sender="user", body=f"more-{n}"), classify)
         # 3 debounced posts after the first.
         assert len(c.user_turn.debounced_event_ids) == 3
 
@@ -411,12 +414,9 @@ class TestDebounceWindow:
         bus, state, c = _build(default_responder="loom", config=cfg)
 
         def classify(event):
-            return plan_for_default("loom", reason="t",
-                                    target_event_ids=[event.id])
+            return plan_for_default("loom", reason="t", target_event_ids=[event.id])
 
         for body in ("a", "b", "c"):
-            c.post_user_event_and_open_turn(
-                ev.chat(sender="user", body=body), classify)
-        user_events = [e for e in bus.snapshot()
-                       if e.kind == "chat" and e.sender == "user"]
+            c.post_user_event_and_open_turn(ev.chat(sender="user", body=body), classify)
+        user_events = [e for e in bus.snapshot() if e.kind == "chat" and e.sender == "user"]
         assert [e.body for e in user_events] == ["a", "b", "c"]

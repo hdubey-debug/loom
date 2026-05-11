@@ -26,6 +26,7 @@ Trigger priority (highest first):
 
 Tie-break: newest event wins (highest id) within the same priority class.
 """
+
 from __future__ import annotations
 
 from collections import deque
@@ -66,8 +67,8 @@ class AgentDecision:
 # Trigger priority
 # ---------------------------------------------------------------------------
 
-def _trigger_priority(event: Event, my_id: str,
-                      user_turn: Optional[UserTurn]) -> Optional[int]:
+
+def _trigger_priority(event: Event, my_id: str, user_turn: Optional[UserTurn]) -> Optional[int]:
     """Lower number = higher priority. ``None`` = not actionable.
 
     Priority 1 (direct mention) is gated on ``event.sender == "user"``:
@@ -83,34 +84,39 @@ def _trigger_priority(event: Event, my_id: str,
     defaults to :data:`DEFAULT_TRIGGER_PRIORITY`, a re-export of
     this function under the public name).
     """
-    if (event.kind == "chat" and event.sender == "user"
-            and my_id in event.addressees):
-        return 1                               # user direct @mention
-    if event.kind == "control" \
-            and isinstance(event.body, dict) \
-            and control_type_of(event) == "dead_letter" \
-            and event.body.get("reroute_to") == my_id:
-        return 2                               # rerouted to me
+    if event.kind == "chat" and event.sender == "user" and my_id in event.addressees:
+        return 1  # user direct @mention
+    if (
+        event.kind == "control"
+        and isinstance(event.body, dict)
+        and control_type_of(event) == "dead_letter"
+        and event.body.get("reroute_to") == my_id
+    ):
+        return 2  # rerouted to me
     # Required obligation transferred to me on participant removal —
     # ``rerouted_from_<pid>`` is the canonical reason set by
     # :meth:`RoomCoordinator._transfer_required_obligations_locked`.
-    if event.kind == "control" \
-            and isinstance(event.body, dict) \
-            and control_type_of(event) == "obligation_recorded" \
-            and event.body.get("participant_id") == my_id \
-            and isinstance(event.body.get("reason"), str) \
-            and event.body["reason"].startswith("rerouted_from_"):
-        return 2                               # transferred to me
+    if (
+        event.kind == "control"
+        and isinstance(event.body, dict)
+        and control_type_of(event) == "obligation_recorded"
+        and event.body.get("participant_id") == my_id
+        and isinstance(event.body.get("reason"), str)
+        and event.body["reason"].startswith("rerouted_from_")
+    ):
+        return 2  # transferred to me
     # The user post that opened the current UserTurn is a trigger only
     # if I hold an unresolved obligation in that turn. This replaces the
     # legacy "user broadcast" priority — non-required participants no
     # longer have an actionable user-post trigger.
-    if (event.kind == "chat" and event.sender == "user"
-            and user_turn is not None
-            and (event.id == user_turn.user_event_id
-                 or event.id in user_turn.debounced_event_ids)
-            and user_turn.obligation_for(my_id) is not None):
-        return 3                               # required for current turn
+    if (
+        event.kind == "chat"
+        and event.sender == "user"
+        and user_turn is not None
+        and (event.id == user_turn.user_event_id or event.id in user_turn.debounced_event_ids)
+        and user_turn.obligation_for(my_id) is not None
+    ):
+        return 3  # required for current turn
     return None
 
 
@@ -120,11 +126,11 @@ DEFAULT_TRIGGER_PRIORITY = _trigger_priority
 
 
 def pick_priority_trigger(
-    events: Iterable[Event], my_id: str,
+    events: Iterable[Event],
+    my_id: str,
     user_turn: Optional[UserTurn],
     *,
-    priority_fn: Optional[Callable[
-        [Event, str, Optional[UserTurn]], Optional[int]]] = None,
+    priority_fn: Optional[Callable[[Event, str, Optional[UserTurn]], Optional[int]]] = None,
 ) -> Optional[Event]:
     """Pick the highest-priority event from ``events``, or ``None``.
 
@@ -154,12 +160,14 @@ def pick_priority_trigger(
 # Decision policy
 # ---------------------------------------------------------------------------
 
-def decide(events: list[Event], my_id: str,
-           user_turn: Optional[UserTurn],
-           *,
-           priority_fn: Optional[Callable[
-               [Event, str, Optional[UserTurn]], Optional[int]]] = None,
-           ) -> AgentDecision:
+
+def decide(
+    events: list[Event],
+    my_id: str,
+    user_turn: Optional[UserTurn],
+    *,
+    priority_fn: Optional[Callable[[Event, str, Optional[UserTurn]], Optional[int]]] = None,
+) -> AgentDecision:
     """Pure decision function. No mutation, no I/O.
 
     ``events`` is the per-wakeup batch (already audience-filtered and
@@ -179,25 +187,22 @@ def decide(events: list[Event], my_id: str,
     considered = [e.id for e in events]
     if not events or user_turn is None:
         return AgentDecision(
-            action="SKIP", trigger_event_id=None,
+            action="SKIP",
+            trigger_event_id=None,
             considered_event_ids=considered,
             reason="empty batch" if not events else "no open user_turn",
         )
 
-    trigger = pick_priority_trigger(
-        events, my_id, user_turn, priority_fn=priority_fn)
+    trigger = pick_priority_trigger(events, my_id, user_turn, priority_fn=priority_fn)
     if trigger is None:
         return AgentDecision(
-            action="SKIP", trigger_event_id=None,
+            action="SKIP",
+            trigger_event_id=None,
             considered_event_ids=considered,
             reason="no actionable trigger",
         )
 
-    is_direct = (
-        trigger.kind == "chat"
-        and trigger.sender == "user"
-        and my_id in trigger.addressees
-    )
+    is_direct = trigger.kind == "chat" and trigger.sender == "user" and my_id in trigger.addressees
     is_dead_letter = (
         trigger.kind == "control"
         and isinstance(trigger.body, dict)
@@ -207,24 +212,28 @@ def decide(events: list[Event], my_id: str,
 
     if is_direct:
         return AgentDecision(
-            action="DRAFT", trigger_event_id=trigger.id,
+            action="DRAFT",
+            trigger_event_id=trigger.id,
             considered_event_ids=considered,
             reason="direct_mention",
         )
     if is_dead_letter:
         return AgentDecision(
-            action="DRAFT", trigger_event_id=trigger.id,
+            action="DRAFT",
+            trigger_event_id=trigger.id,
             considered_event_ids=considered,
             reason="dead_letter_rerouted",
         )
     if has_obligation:
         return AgentDecision(
-            action="DRAFT", trigger_event_id=trigger.id,
+            action="DRAFT",
+            trigger_event_id=trigger.id,
             considered_event_ids=considered,
             reason="obligation",
         )
     return AgentDecision(
-        action="SKIP", trigger_event_id=trigger.id,
+        action="SKIP",
+        trigger_event_id=trigger.id,
         considered_event_ids=considered,
         reason="not_eligible",
     )
@@ -270,8 +279,7 @@ class ParticipantActor:
         self._cursor = -1
         self._stopped = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._pending_direct_mentions: deque[int] = deque(
-            maxlen=pending_mention_capacity)
+        self._pending_direct_mentions: deque[int] = deque(maxlen=pending_mention_capacity)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -285,7 +293,8 @@ class ParticipantActor:
         if self._thread is not None:
             return
         self._thread = threading.Thread(
-            target=self._loop, daemon=True,
+            target=self._loop,
+            daemon=True,
             name=f"loom-actor-{self.id}",
         )
         self._thread.start()
@@ -330,8 +339,7 @@ class ParticipantActor:
         unbind = self.bus.bind_actor(self.id)
         try:
             while not self._stopped.is_set():
-                new_len = self.bus.wait_after(
-                    self._cursor, timeout=self.wakeup_timeout_s)
+                new_len = self.bus.wait_after(self._cursor, timeout=self.wakeup_timeout_s)
                 if self._stopped.is_set() or self.bus.stopped:
                     return
                 if new_len <= self._cursor + 1:
@@ -351,11 +359,14 @@ class ParticipantActor:
                 # ``SenderMismatchError``. ``post_internal`` is the
                 # documented kernel-internal escape hatch for the
                 # crash-handler emission path.
-                self.bus.post_internal(ev.actor_error(
-                    participant_id=self.id,
-                    exception_class=type(exc).__name__,
-                    message=str(exc)[:500],
-                ), auth=_KERNEL_AUTH)
+                self.bus.post_internal(
+                    ev.actor_error(
+                        participant_id=self.id,
+                        exception_class=type(exc).__name__,
+                        message=str(exc)[:500],
+                    ),
+                    auth=_KERNEL_AUTH,
+                )
             except Exception:
                 pass
 
@@ -384,8 +395,7 @@ class ParticipantActor:
             snap = replays + snap
 
         priority_fn = self.coordinator.config.trigger_priority or None
-        decision = decide(snap, self.id, self.coordinator.user_turn,
-                          priority_fn=priority_fn)
+        decision = decide(snap, self.id, self.coordinator.user_turn, priority_fn=priority_fn)
 
         if snap:
             highest = max(e.id for e in snap)
@@ -395,15 +405,17 @@ class ParticipantActor:
         self._update_pending_mentions(decision, snap)
         return decision
 
-    def _update_pending_mentions(self, decision: AgentDecision,
-                                 considered: list[Event]) -> None:
+    def _update_pending_mentions(self, decision: AgentDecision, considered: list[Event]) -> None:
         # Only user-sourced mentions are actionable in v0; pending-LRU
         # tracks the same set so we don't store agent-to-agent mentions
         # we would refuse to draft for anyway.
         for e in considered:
-            if (e.kind == "chat" and e.sender == "user"
-                    and self.id in e.addressees
-                    and e.id != decision.trigger_event_id):
+            if (
+                e.kind == "chat"
+                and e.sender == "user"
+                and self.id in e.addressees
+                and e.id != decision.trigger_event_id
+            ):
                 if e.id not in self._pending_direct_mentions:
                     self._pending_direct_mentions.append(e.id)
         if decision.trigger_event_id is not None:
@@ -420,17 +432,15 @@ class ParticipantActor:
         # DRAFT. Direct-mention bypass is restricted to user-sourced
         # mentions — agent-to-agent @ goes through the standard
         # allowed_speakers gate so chains close at max_responses.
-        is_direct = bool(
-            trigger and trigger.sender == "user"
-            and self.id in trigger.addressees
-        )
+        is_direct = bool(trigger and trigger.sender == "user" and self.id in trigger.addressees)
         # action == "DRAFT" guarantees both fields are set; the asserts
         # encode this invariant for the type checker and fail loudly if
         # a future code path violates it.
         assert decision.trigger_event_id is not None
         assert trigger is not None
         lease = self.coordinator.acquire_lease(
-            self.id, decision.trigger_event_id,
+            self.id,
+            decision.trigger_event_id,
             is_direct_mention=is_direct,
         )
         if lease is None:

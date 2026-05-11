@@ -7,6 +7,7 @@ policy. The kernel must keep healthy turns flowing even when one
 participant misbehaves — these tests assert that cross-cutting
 guarantee.
 """
+
 from __future__ import annotations
 
 import time
@@ -26,8 +27,10 @@ from loom.policy.single_responder import SingleResponderPolicy
 
 # Shared long-text helper — bypasses both the pass buffer and the loop
 # guard short-text threshold so the kernel commits canonical chats.
-_LONG = ("reply long enough to bypass both the pass buffer and the loop "
-         "guard short-text threshold for canonical commit by the kernel.")
+_LONG = (
+    "reply long enough to bypass both the pass buffer and the loop "
+    "guard short-text threshold for canonical commit by the kernel."
+)
 
 
 def _send_for(pid: str):
@@ -36,6 +39,7 @@ def _send_for(pid: str):
     def _send(prompt):
         counter[0] += 1
         return f"{pid} send-adapter turn {counter[0]} {_LONG}"
+
     return _send
 
 
@@ -45,6 +49,7 @@ def _stream_for(pid: str):
     def _stream(prompt):
         counter[0] += 1
         yield f"{pid} stream-adapter turn {counter[0]} {_LONG}"
+
     return _stream
 
 
@@ -85,11 +90,11 @@ class _SlowObjectClient(_ObjectClient):
 # All three adapter kinds in one room.
 # ---------------------------------------------------------------------------
 
+
 class TestAllThreeAdaptersInOneRoom:
     """System-level: send / stream / object adapters coexist."""
 
-    def test_send_stream_object_adapters_coexist_in_open_chat(
-            self, multi_turn_session):
+    def test_send_stream_object_adapters_coexist_in_open_chat(self, multi_turn_session):
         a_send = agent_from_send("aa", _send_for("aa"))
         a_stream = agent_from_stream("bb", _stream_for("bb"))
         a_object = agent_from_object("cc", _ObjectClient("cc"))
@@ -103,14 +108,11 @@ class TestAllThreeAdaptersInOneRoom:
         assert "bb" in senders
         assert "cc" in senders
 
-    def test_each_adapter_kind_can_become_default_responder(
-            self, multi_turn_session):
+    def test_each_adapter_kind_can_become_default_responder(self, multi_turn_session):
         for pid, agent_factory in [
             ("a_send", lambda: agent_from_send("a_send", _send_for("a_send"))),
-            ("a_stream", lambda: agent_from_stream("a_stream",
-                                                    _stream_for("a_stream"))),
-            ("a_object", lambda: agent_from_object("a_object",
-                                                   _ObjectClient("a_object"))),
+            ("a_stream", lambda: agent_from_stream("a_stream", _stream_for("a_stream"))),
+            ("a_object", lambda: agent_from_object("a_object", _ObjectClient("a_object"))),
         ]:
             agent = agent_factory()
             room = multi_turn_session(
@@ -122,16 +124,19 @@ class TestAllThreeAdaptersInOneRoom:
             senders = {r.sender for r in replies if r.sender != "user"}
             assert senders == {pid}
 
-    def test_persona_capability_block_cost_tier_round_trip_per_adapter(
-            self, multi_turn_session):
+    def test_persona_capability_block_cost_tier_round_trip_per_adapter(self, multi_turn_session):
         a_send = agent_from_send(
-            "ps", _send_for("ps"),
-            persona="ps-persona", capability_block="ps-caps",
+            "ps",
+            _send_for("ps"),
+            persona="ps-persona",
+            capability_block="ps-caps",
             cost_tier=3,
         )
         a_stream = agent_from_stream(
-            "st", _stream_for("st"),
-            persona="st-persona", capability_block="st-caps",
+            "st",
+            _stream_for("st"),
+            persona="st-persona",
+            capability_block="st-caps",
             cost_tier=4,
         )
         # Object adapter pulls metadata from the wrapped object.
@@ -155,7 +160,8 @@ class TestAllThreeAdaptersInOneRoom:
         assert wirings["ob"].cost_tier == 5
 
     def test_object_adapter_with_cancel_invoked_on_room_stop(
-            self, multi_turn_session, config_factory):
+        self, multi_turn_session, config_factory
+    ):
         # Build a slow-streaming object client. With ``lease_ttl_s=1``,
         # the lease expires while the agent is still in time.sleep.
         # When sleep finishes and the next chunk hits streaming.py,
@@ -182,12 +188,12 @@ class TestAllThreeAdaptersInOneRoom:
 # Cooperative + adversarial agents in the same room.
 # ---------------------------------------------------------------------------
 
+
 class TestCooperativeAndAdversarialCoexist:
     """System-level: one bad agent does not disrupt the rest of the room."""
 
     @pytest.mark.timing
-    def test_one_hang_after_first_delta_does_not_starve_three_healthy(
-            self, mixed_agent_room):
+    def test_one_hang_after_first_delta_does_not_starve_three_healthy(self, mixed_agent_room):
         room = mixed_agent_room(
             healthy=3,
             adversarial=[("hang", 1)],
@@ -199,7 +205,8 @@ class TestCooperativeAndAdversarialCoexist:
         assert {"healthy_0", "healthy_1", "healthy_2"} <= senders
 
     def test_one_raises_after_chunks_routes_to_default_responder_in_default_responder_mode(
-            self, mixed_agent_room):
+        self, mixed_agent_room
+    ):
         # In a broadcast room with a raises_after_chunks agent, the
         # OTHER agents still commit. The default_responder slot is set
         # so that any policy_error fallback would route there — but
@@ -216,7 +223,8 @@ class TestCooperativeAndAdversarialCoexist:
         assert "healthy_0" in senders or "healthy_1" in senders
 
     def test_garbage_payload_agent_in_open_chat_does_not_corrupt_journal(
-            self, mixed_agent_room, tmp_path):
+        self, mixed_agent_room, tmp_path
+    ):
         # Construct a journaled mixed-agent room and verify the journal
         # parses cleanly even after a garbage-payload agent contributes.
         room = mixed_agent_room(
@@ -229,6 +237,7 @@ class TestCooperativeAndAdversarialCoexist:
         room.stop(timeout=10.0)
         # Re-open via Journal observation surface.
         from loom.kernel.journal import Journal
+
         events = Journal(tmp_path / "garbage_session").load_events()
         # Every line parsed cleanly; events list is well-formed.
         assert len(events) >= 1
@@ -237,7 +246,8 @@ class TestCooperativeAndAdversarialCoexist:
 
     @pytest.mark.timing
     def test_infinite_stream_agent_bounded_by_lease_ttl_other_agents_complete(
-            self, mixed_agent_room, config_factory):
+        self, mixed_agent_room, config_factory
+    ):
         # Short lease_ttl so the infinite stream is bounded even before
         # cap_chunks runs out (200 chunks at adapter pace).
         cfg = config_factory(lease_ttl_s=2)
@@ -256,11 +266,13 @@ class TestCooperativeAndAdversarialCoexist:
 # Routing across all four bundled policies in a live room.
 # ---------------------------------------------------------------------------
 
+
 class TestRoutingAcrossPoliciesInLiveRoom:
     """System-level: each policy routes a real ``post_and_wait`` correctly."""
 
     def test_default_policy_at_mention_routes_committed_chat_to_named_agent(
-            self, multi_turn_session):
+        self, multi_turn_session
+    ):
         agents = [
             agent_from_send("alpha", _send_for("alpha")),
             agent_from_send("beta", _send_for("beta")),
@@ -277,7 +289,8 @@ class TestRoutingAcrossPoliciesInLiveRoom:
 
     @pytest.mark.stress
     def test_open_chat_5_agents_each_committed_chat_appears_in_post_and_wait_replies(
-            self, multi_turn_session, varied_agents):
+        self, multi_turn_session, varied_agents
+    ):
         agents = varied_agents(5, prefix="oc")
         room = multi_turn_session(
             agents=agents,
@@ -289,7 +302,8 @@ class TestRoutingAcrossPoliciesInLiveRoom:
         assert {f"oc{i}" for i in range(5)} <= senders
 
     def test_round_robin_3_agents_5_turns_speakers_match_rotation_order(
-            self, multi_turn_session, varied_agents):
+        self, multi_turn_session, varied_agents
+    ):
         agents = varied_agents(3, prefix="rt")
         order = ["rt0", "rt1", "rt2"]
         room = multi_turn_session(
@@ -309,7 +323,8 @@ class TestRoutingAcrossPoliciesInLiveRoom:
         assert set(speakers) == set(order)
 
     def test_single_responder_silenced_when_responder_inactive_falls_to_acknowledgement(
-            self, multi_turn_session):
+        self, multi_turn_session
+    ):
         # Configure SingleResponderPolicy with an id that's NOT in the
         # agent list. The policy treats missing/inactive as silenced
         # and returns plan_for_acknowledgement → no turn opens →

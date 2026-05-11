@@ -18,6 +18,7 @@ The dataclasses here are pure data; mutation belongs to the
 :class:`RoomCoordinator`. Module-level helpers build a few canonical
 plans the runtime needs (acknowledgement, fallback default).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -47,27 +48,29 @@ RoutingCase = Literal[
 # helpers. Mirrors the :data:`RoutingCase` :class:`Literal` exactly. The
 # Literal is for static analysis; the set is for the runtime guard that
 # rejects unknown routing cases at plan construction (P2.6).
-_VALID_ROUTING_CASES: frozenset[str] = frozenset({
-    "direct_mention",
-    "question",
-    "challenge",
-    "followup",
-    "acknowledgement",
-    "multi_opinion",
-    "single_responder",
-    "round_robin",
-    "floor",
-    "broadcast",
-    "dm",
-    "none",
-})
+_VALID_ROUTING_CASES: frozenset[str] = frozenset(
+    {
+        "direct_mention",
+        "question",
+        "challenge",
+        "followup",
+        "acknowledgement",
+        "multi_opinion",
+        "single_responder",
+        "round_robin",
+        "floor",
+        "broadcast",
+        "dm",
+        "none",
+    }
+)
 
 
 def _validate_routing_case(value: str) -> None:
     if value not in _VALID_ROUTING_CASES:
         raise ValueError(
-            f"unknown routing_case: {value!r}; valid values are "
-            f"{sorted(_VALID_ROUTING_CASES)}")
+            f"unknown routing_case: {value!r}; valid values are {sorted(_VALID_ROUTING_CASES)}"
+        )
 
 
 @dataclass
@@ -79,6 +82,7 @@ class ResponseObligation:
     obligation answers — typically a single user message, but
     multi-mention plans may span more than one.
     """
+
     id: int
     participant_id: str
     level: ObligationLevel
@@ -139,6 +143,7 @@ class UserTurnPlan:
       vocative overrides so the rotation slot is preserved across the
       side-question.
     """
+
     requires_response: bool
     routing_case: RoutingCase
     required_participants: set[str] = field(default_factory=set)
@@ -166,15 +171,15 @@ class UserTurnPlan:
             raise ValueError(
                 "UserTurnPlan.requires_response=True with empty "
                 "required_participants — use plan_for_acknowledgement() "
-                "or fall back to default responder")
+                "or fall back to default responder"
+            )
         # Default allowed_speakers to the union of required + optional.
         # Interpreters can override (e.g., narrow further or include
         # observers); the default matches the "everyone with an
         # obligation may speak" expectation.
         if not self.allowed_speakers:
-            self.allowed_speakers = (
-                set(self.required_participants)
-                | set(self.optional_participants)
+            self.allowed_speakers = set(self.required_participants) | set(
+                self.optional_participants
             )
         # Default max_responses to len(allowed_speakers); 0 means
         # "unlimited" only when there are no allowed speakers (no-response
@@ -184,7 +189,8 @@ class UserTurnPlan:
 
 
 def plan_for_acknowledgement(
-    *, target_event_ids: Optional[list[int]] = None,
+    *,
+    target_event_ids: Optional[list[int]] = None,
     rationale: str = "user message classified as acknowledgement",
 ) -> UserTurnPlan:
     """Plan for messages that need no response (e.g. ``thanks``, ``ok``).
@@ -210,7 +216,8 @@ def plan_for_acknowledgement(
 
 def plan_for_default(
     default_responder: Optional[str],
-    *, reason: str,
+    *,
+    reason: str,
     target_event_ids: Optional[list[int]] = None,
     rationale: str = "fallback to default responder",
     instruction: Optional[str] = None,
@@ -267,7 +274,8 @@ def plan_for_default(
 
 def plan_with_required(
     required: list[str],
-    *, routing_case: RoutingCase,
+    *,
+    routing_case: RoutingCase,
     target_event_ids: list[int],
     reason: str,
     rationale: str = "",

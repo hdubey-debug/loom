@@ -35,6 +35,7 @@ so policy authors don't reach into ``loom.kernel.*``):
 - :func:`plan_for_default`          — fall back to a single
   configured default responder.
 """
+
 from loom.kernel.obligations import (
     plan_for_acknowledgement,
     plan_for_default,

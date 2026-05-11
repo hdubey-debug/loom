@@ -13,6 +13,7 @@ The coordinator wraps these primitives with bus emission of control
 events (``participant_added/removed``, ``default_responder_changed``);
 this module performs only the state transition.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ class RoomConfig:
     ``1`` covers the v0 group-chat behavior: one substantive reply per
     speaker per turn.
     """
+
     compact_threshold: int = 50
     user_turn_idle_timeout_s: int = 20
     user_turn_debounce_ms: int = 250
@@ -96,6 +98,7 @@ class RoomControlState:
       advanced on UserTurn close when the closed plan came from the
       rotation (not from an @-mention or vocative override).
     """
+
     roles: dict[str, str] = field(default_factory=dict)
     wait_for_user: bool = False
     style: StyleLevel = "normal"
@@ -119,6 +122,7 @@ class ParticipantInfo:
       error-backoff-pending; excluded from fallback selection.
     - ``role_hints`` opaque metadata published with ``participant_added``.
     """
+
     id: str
     capable: bool = True
     cost_tier: int = 0
@@ -135,6 +139,7 @@ class ParticipantInfoView:
     :class:`MappingProxyType` so policies cannot mutate it either.
     Constructed by :meth:`RoomState.view`; never instantiated directly.
     """
+
     id: str
     capable: bool
     cost_tier: int
@@ -145,6 +150,7 @@ class ParticipantInfoView:
 @dataclass
 class RoomState:
     """Live, mutable room state. Single-writer (the coordinator)."""
+
     config: RoomConfig
     room_epoch: int = 0
     topic: Optional[str] = None
@@ -188,8 +194,7 @@ class RoomState:
         self.room_epoch += 1
 
         slot_changes: dict[str, Optional[str]] = {}
-        for slot in ("anchor_id", "chair_id",
-                     "default_responder_id", "default_summarizer_id"):
+        for slot in ("anchor_id", "chair_id", "default_responder_id", "default_summarizer_id"):
             if getattr(self, slot) == pid:
                 new_id = self.cheapest_active_capable()
                 slot_changes[slot] = new_id
@@ -258,8 +263,7 @@ class RoomState:
         Used as fallback for any unset / removed slot occupant, and as
         the default summarizer if none is configured.
         """
-        candidates = [p for p in self.participants.values()
-                      if p.active and p.capable]
+        candidates = [p for p in self.participants.values() if p.active and p.capable]
         if not candidates:
             return None
         candidates.sort(key=lambda p: (p.cost_tier, p.id))
@@ -298,8 +302,7 @@ class RoomState:
         validate before calling. An empty dict clears all roles.
         """
         old = dict(self.control.roles)
-        clean = {pid: role for pid, role in roles.items()
-                 if pid in self.participants}
+        clean = {pid: role for pid, role in roles.items() if pid in self.participants}
         self.control.roles = clean
         return old
 
@@ -323,8 +326,7 @@ class RoomState:
         entered round-robin, start from the top".
         """
         old = list(self.control.turn_order)
-        self.control.turn_order = [pid for pid in order
-                                   if pid in self.participants]
+        self.control.turn_order = [pid for pid in order if pid in self.participants]
         self.control.next_speaker_idx = 0
         return old
 
@@ -336,16 +338,17 @@ class RoomState:
         stays within the live set. Returns ``0`` when the rotation has
         no live members (the next read will fall back to broadcast).
         """
-        live = [pid for pid in self.control.turn_order
-                if pid in self.participants
-                and self.participants[pid].active
-                and self.participants[pid].capable]
+        live = [
+            pid
+            for pid in self.control.turn_order
+            if pid in self.participants
+            and self.participants[pid].active
+            and self.participants[pid].capable
+        ]
         if not live:
             self.control.next_speaker_idx = 0
             return 0
-        self.control.next_speaker_idx = (
-            (self.control.next_speaker_idx + 1) % len(live)
-        )
+        self.control.next_speaker_idx = (self.control.next_speaker_idx + 1) % len(live)
         return self.control.next_speaker_idx
 
     # ------------------------------------------------------------------
@@ -400,6 +403,7 @@ class RoomState:
 # Read-only views — passed to policies in lieu of the live RoomState
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class RoomControlStateView:
     """Read-only view of :class:`RoomControlState`.
@@ -408,6 +412,7 @@ class RoomControlStateView:
     :class:`MappingProxyType`. Setters do not exist. Construct via
     :meth:`RoomState.view`, never directly.
     """
+
     roles: Mapping[str, str]
     wait_for_user: bool
     style: StyleLevel
@@ -434,6 +439,7 @@ class RoomStateView:
     ``view.control.turn_order``) is the supported path. Anything beyond
     reading is a policy bug.
     """
+
     room_epoch: int
     topic: Optional[str]
     participants: Mapping[str, ParticipantInfoView]

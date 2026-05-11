@@ -6,6 +6,7 @@ Invariants:
   returns whatever prefix it can parse (skipping the partial last line).
 - A snapshot + replay round-trip produces an equal RoomState.
 """
+
 from __future__ import annotations
 
 
@@ -15,7 +16,8 @@ from hypothesis import strategies as st
 from loom.kernel.events import Event
 from loom.kernel.journal import Journal, restore_state
 from loom.kernel.room import (
-    RoomConfig, RoomState,
+    RoomConfig,
+    RoomState,
 )
 
 from tests.property.strategies import event_streams, participant_ids
@@ -26,9 +28,7 @@ def test_load_events_round_trip_preserves_order(tmp_path_factory, events):
     """Writing events to events.jsonl then loading returns them in order."""
     tmp = tmp_path_factory.mktemp("journal")
     j = Journal(tmp)
-    j.events_path.write_text(
-        "\n".join(e.to_jsonl() for e in events) + ("\n" if events else "")
-    )
+    j.events_path.write_text("\n".join(e.to_jsonl() for e in events) + ("\n" if events else ""))
     loaded = j.load_events()
     assert [e.to_jsonl() for e in loaded] == [e.to_jsonl() for e in events]
 
@@ -65,13 +65,15 @@ def test_load_events_skips_garbage_lines(tmp_path_factory, garbage: str):
 
 
 @given(
-    state_data=st.fixed_dictionaries({
-        "version": st.integers(min_value=1, max_value=3),
-        "room_epoch": st.integers(min_value=0, max_value=100),
-        "topic": st.one_of(st.none(), st.text(max_size=20)),
-        "anchor_id": st.one_of(st.none(), participant_ids),
-        "default_responder_id": st.one_of(st.none(), participant_ids),
-    }),
+    state_data=st.fixed_dictionaries(
+        {
+            "version": st.integers(min_value=1, max_value=3),
+            "room_epoch": st.integers(min_value=0, max_value=100),
+            "topic": st.one_of(st.none(), st.text(max_size=20)),
+            "anchor_id": st.one_of(st.none(), participant_ids),
+            "default_responder_id": st.one_of(st.none(), participant_ids),
+        }
+    ),
 )
 def test_restore_state_handles_arbitrary_top_level_dicts(state_data):
     """``restore_state`` doesn't crash on arbitrary supported-version snapshots."""
@@ -84,25 +86,27 @@ def test_restore_state_handles_arbitrary_top_level_dicts(state_data):
 
 
 @given(
-    control_data=st.fixed_dictionaries({
-        "next_speaker_idx": st.integers(min_value=-100, max_value=100),
-        "turn_order": st.one_of(
-            st.lists(participant_ids, max_size=5),
-            st.text(max_size=10),  # invalid type
-            st.none(),
-        ),
-        "style": st.one_of(
-            st.sampled_from(["brief", "normal", "detailed"]),
-            st.text(max_size=10),  # potentially invalid
-        ),
-        # v3/v4 snapshots may carry the retired ``turn_taking_mode``
-        # field; restore_state ignores it in v5+. Including arbitrary
-        # values here verifies the field is tolerated.
-        "turn_taking_mode": st.one_of(
-            st.sampled_from(["broadcast", "round_robin"]),
-            st.text(max_size=10),
-        ),
-    }),
+    control_data=st.fixed_dictionaries(
+        {
+            "next_speaker_idx": st.integers(min_value=-100, max_value=100),
+            "turn_order": st.one_of(
+                st.lists(participant_ids, max_size=5),
+                st.text(max_size=10),  # invalid type
+                st.none(),
+            ),
+            "style": st.one_of(
+                st.sampled_from(["brief", "normal", "detailed"]),
+                st.text(max_size=10),  # potentially invalid
+            ),
+            # v3/v4 snapshots may carry the retired ``turn_taking_mode``
+            # field; restore_state ignores it in v5+. Including arbitrary
+            # values here verifies the field is tolerated.
+            "turn_taking_mode": st.one_of(
+                st.sampled_from(["broadcast", "round_robin"]),
+                st.text(max_size=10),
+            ),
+        }
+    ),
 )
 def test_restore_state_clamps_and_filters_control(control_data):
     """Invalid control sub-fields fall back to safe defaults."""

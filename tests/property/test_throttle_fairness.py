@@ -8,6 +8,7 @@ Invariants:
 - The per-channel limit is independent of the per-participant limit:
   a slow producer cannot starve a fast channel and vice versa.
 """
+
 from __future__ import annotations
 
 from hypothesis import given
@@ -22,8 +23,7 @@ from loom.kernel.coordinator import ThrottleConfig
 )
 def test_per_participant_quota_enforced(quota, over):
     """After ``quota`` consumes the participant is rate-limited."""
-    t = ThrottleConfig(per_participant_per_min=quota,
-                 per_channel_per_min=10_000)
+    t = ThrottleConfig(per_participant_per_min=quota, per_channel_per_min=10_000)
     # Burn through the quota.
     for i in range(quota):
         assert t.try_consume("alice", "main", now=100.0 + i * 0.001) is True
@@ -35,14 +35,12 @@ def test_per_participant_quota_enforced(quota, over):
 @given(quota=st.integers(min_value=1, max_value=20))
 def test_window_slide_re_enables_consumption(quota):
     """After 60s the participant can consume the full quota again."""
-    t = ThrottleConfig(per_participant_per_min=quota,
-                 per_channel_per_min=10_000)
+    t = ThrottleConfig(per_participant_per_min=quota, per_channel_per_min=10_000)
     for i in range(quota):
         assert t.try_consume("alice", "main", now=100.0 + i * 0.001) is True
     # Window slid past — every prior timestamp is older than 60s.
     for i in range(quota):
-        assert t.try_consume(
-            "alice", "main", now=200.0 + i * 0.001) is True
+        assert t.try_consume("alice", "main", now=200.0 + i * 0.001) is True
 
 
 @given(
@@ -56,8 +54,7 @@ def test_channel_limit_independent_of_participant(p_quota, c_quota):
     before being rate-limited; the channel cap is the only ceiling.
     """
     assert c_quota > p_quota  # precondition for the scenario
-    t = ThrottleConfig(per_participant_per_min=p_quota,
-                 per_channel_per_min=c_quota)
+    t = ThrottleConfig(per_participant_per_min=p_quota, per_channel_per_min=c_quota)
     # alice burns through her per-participant quota.
     for i in range(p_quota):
         assert t.try_consume("alice", "main", now=100.0 + i * 0.001) is True
@@ -67,8 +64,7 @@ def test_channel_limit_independent_of_participant(p_quota, c_quota):
     # has a fresh per-participant counter.
     remaining_channel = c_quota - p_quota
     for i in range(remaining_channel):
-        assert t.try_consume(
-            f"agent{i}", "main", now=101.0 + i * 0.001) is True
+        assert t.try_consume(f"agent{i}", "main", now=101.0 + i * 0.001) is True
 
 
 @given(
@@ -77,9 +73,7 @@ def test_channel_limit_independent_of_participant(p_quota, c_quota):
 )
 def test_per_participant_independent(quota, n_participants):
     """Different participants share no per-participant counters."""
-    t = ThrottleConfig(per_participant_per_min=quota,
-                 per_channel_per_min=10_000)
+    t = ThrottleConfig(per_participant_per_min=quota, per_channel_per_min=10_000)
     for p in range(n_participants):
         for i in range(quota):
-            assert t.try_consume(
-                f"p{p}", "main", now=100.0 + p * 100 + i * 0.001) is True
+            assert t.try_consume(f"p{p}", "main", now=100.0 + p * 100 + i * 0.001) is True

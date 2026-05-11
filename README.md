@@ -141,7 +141,7 @@ flowchart TD
 
 | Policy | Behavior |
 |---|---|
-| `DefaultPolicy` | Loom's v0 floor-aware classifier: direct mention, vocative, acknowledgement, floor-narrowed, game-start round-robin, broadcast. |
+| `DefaultPolicy` | Loom's classifier: direct mention, vocative addressing, acknowledgement, broadcast. Production-grade. |
 | `OpenChatPolicy` | Broadcast every user post to every active capable participant. |
 | `SingleResponderPolicy(id)` | Always route to one configured participant. |
 | `RoundRobinPolicy(order)` | Rotate through a fixed order, one speaker per user post. |
@@ -224,10 +224,25 @@ class MyPolicy(ConversationPolicy):
 ```
 
 Look at `loom/policy/round_robin.py` for the canonical reference of
-declarative state mutation (`set_turn_taking_mode`, `set_turn_order`,
-`advance_turn_pointer` on the returned plan). Look at
-`loom/policy/default.py` for a richer classifier with addressing
-detection.
+declarative state mutation (`set_turn_order`, `advance_turn_pointer`
+on the returned plan — round-robin mode is signalled by a non-empty
+`turn_order`). Look at `loom/policy/default.py` for a richer
+classifier with addressing detection.
+
+**v0.2 added several optional hooks** any policy can override:
+
+- `charter_text(state)` — extra system-preamble text rendered after
+  the kernel charter, before persona/topic.
+- `prompt_sections(state, participant_id, trigger_event)` — named
+  sections injected late in the system preamble, each with a
+  `<<<NAME>>>` header for diff attribution.
+- `dead_letter_target(state, removed_participant)` — pick the reroute
+  target when an `@`-mentioned agent is removed mid-turn.
+- `should_post_response(body, state, participant_id)` — veto a draft
+  after the kernel's idle / IoU / empty filters have passed.
+
+All four have safe defaults; buggy hook implementations are caught
+at the boundary so a bad policy can't crash the room.
 
 The policy contract is intentionally narrow:
 
@@ -240,9 +255,10 @@ The policy contract is intentionally narrow:
   `"default_responder"` (fall back), or `"raise"` (dev mode).
 - **Policies must not mutate `RoomState` and must not post to the
   bus** — both are the kernel's responsibility. Declarative requests
-  go on the returned `UserTurnPlan` (`set_turn_taking_mode`,
-  `set_turn_order`, `set_floor_owner`, `wait_for_user_after`, etc.).
-  A boundary test enforces this with a static grep.
+  go on the returned `UserTurnPlan` (`set_turn_order`,
+  `advance_turn_pointer`, `set_allowed_speakers`, `set_max_responses`,
+  `wait_for_user_after`, etc.). A boundary test enforces this with a
+  static grep.
 
 `system_prompt(actor_id, state)` and `role_prompt(actor_id, state)`
 are optional overrides. They contribute extra prompt sections after
@@ -281,10 +297,14 @@ The journal writes:
 
 Both files are written for audit + tooling-grade replay
 (`Journal.replay_into(coord)` and `Journal.restore_state(...)` work
-in tests). **Automatic restart-recovery wiring is not in v0.1.x** —
+in tests). **Automatic restart-recovery wiring is still pending** —
 `build_loom_session` constructs a fresh `RoomState` and does not call
 the recovery helpers; the journal is purely an audit log at runtime.
-Wiring auto-restore lands in v0.2.
+Auto-restore wiring is on the v0.3 list.
+
+**Snapshot schema is at v5** as of v0.2; older v3/v4 snapshots load
+cleanly with the retired `floor_owner` and `turn_taking_mode` fields
+silently discarded.
 
 **Policy state is not journaled in v0** — restart instantiates a
 fresh policy. Stateful policies (debate phase, 20Q question count)
@@ -308,42 +328,54 @@ from loom import (
 )
 ```
 
+**Extension types** (import from `loom.contracts` when writing a
+custom policy that uses v0.2 hooks):
+
+```python
+from loom.contracts import (
+    PromptSection,        # named system-preamble section
+    LeaseCheck,           # gate in the lease-grant chain
+    LeaseCheckResult,     # (passed: bool, deny_reason: Optional[str])
+    PASSED,               # sentinel for the common path
+    TriggerPriorityFn,    # actor's trigger classification hook
+)
+from loom.kernel.events import register_secret_shape, SecretShape
+```
+
 Everything else (the kernel internals under `loom.kernel.*`) is
 implementation detail and may shift between minor versions.
 
 ## v0 limitations
 
-- No async / off-lock policies (planned for v0.2).
-- No policy state persistence across restart.
-- No automatic restart-recovery from the journal (planned for v0.2).
-  `events.jsonl` and `room_state.json` are written but
-  `build_loom_session` does not currently call `replay_into` /
-  `restore_state` on startup.
-- `max_responses` is enforced at lease-grant time as of v0.1.2 (the
-  coordinator counts already-committed drafts plus outstanding valid
-  leases for the turn). v0.1.0 / v0.1.1 had a race window where two
-  actors waking on the same trigger could both commit before the cap
-  was checked.
-- Dead-letter rerouting transfers required obligations to a fallback
-  agent (default-responder slot, then cheapest active capable) in
-  v0.1.2 — the rerouted agent has a real obligation to drive the
-  draft. v0.1.0 / v0.1.1 emitted only a `dead_letter` trace event;
-  the turn closed without a re-answer if the removed agent held the
-  last unresolved required obligation.
+- No async / off-lock policies. `plan_user_turn` runs under the
+  coordinator's lock with a <10ms contract; an LLM-backed policy
+  would freeze every actor thread. On the v0.3 list.
+- No policy state persistence across restart. Stateful policies
+  (debate phase, 20-questions count) work in-process but reset on
+  restart.
+- No automatic restart-recovery from the journal. `events.jsonl`
+  and `room_state.json` are written but `build_loom_session` does
+  not currently call `replay_into` / `restore_state` on startup.
+  Deferred from v0.2 to v0.3.
 - Stream deltas are flushed during the streaming loop, before the
-  post-stream chair-speak / idle-dup / PASS filters run. UI renderers
-  should clear pending text on `stream_end(status="suppressed")`
+  post-stream chair-speak / idle-dup filters and the
+  `should_post_response` policy veto run. UI renderers should clear
+  pending text on `stream_end(status in {"suppressed", "filtered"})`
   rather than treating already-rendered deltas as the final reply.
-- No per-message rate limiting or per-participant cost budgets in the
-  public API. The kernel has the hooks; the room facade doesn't expose
-  them yet.
-- `RoomStateView` is shallow — `participants` and `control.roles` are
-  read-only mappings, `control.turn_order` and `floor_owner` are
-  tuples, and the view itself is a frozen dataclass. Leaf-level
-  mutation (`participant_info.active = False` through a captured
-  alias) is still possible; full deep-freeze with `ParticipantInfoView`
-  is on the v0.2 list.
+- No per-message rate limiting in the public API surface. The
+  kernel has `ThrottleConfig` and `BudgetConfig` hooks; the room
+  facade doesn't expose them yet.
+- No structured `tool_call` / `tool_result` event kinds. Agents that
+  use tools today do so inside their own adapter; Loom sees only the
+  final text. Tool-event support is on the v0.4 list.
 - No standalone PyPI package. Install in-place from source.
+
+**Resolved in v0.2** (from the prior limits list): `RoomStateView` is
+now deep-frozen via `ParticipantInfoView`; `RoomState.set_floor_owner`
+and `set_turn_taking_mode` were removed (round-robin is now signalled
+by a non-empty `turn_order`); subscriber fan-out runs outside the bus
+lock; the lease-rejection chain became a pluggable
+`RoomConfig.lease_checks` with structured `lease_denied` events.
 
 ## Examples
 
@@ -351,6 +383,7 @@ The [`examples/`](examples/) directory has runnable scripts:
 
 | File | What it shows |
 |---|---|
+| [`colab_demo.ipynb`](examples/colab_demo.ipynb) | **One-click Colab tutorial.** Mock-agent walkthrough of all four policies plus a v0.2 hook, then a real-LLM live chat with OpenAI + Gemini. |
 | [`two_agents.py`](examples/two_agents.py) | Two scripted agents on `OpenChatPolicy`. No API key needed. |
 | [`openai_two_agents.py`](examples/openai_two_agents.py) | Two real OpenAI-backed agents on `OpenChatPolicy`. Requires `OPENAI_API_KEY`. |
 | [`round_robin_classroom.py`](examples/round_robin_classroom.py) | Three scripted agents on `RoundRobinPolicy` with a teacher/student handoff. |
@@ -364,15 +397,44 @@ python examples/two_agents.py
 
 ## Roadmap
 
-The "v0 limitations" above are the v0.2 work list:
+**v0.2 — landed** (12-PR refactor program; see `CHANGELOG.md`):
 
-- Async / off-lock policies for slow planning logic.
-- Policy-state snapshot/restore lifecycle hooks.
+- Deep-frozen `ParticipantInfoView` (closes the soft-leak in
+  `RoomStateView.participants`).
+- `_KernelAuth` token gates `MessageBus.post_internal`.
+- Removed `turn_taking_mode` and `floor_owner` from kernel state
+  (along with `/floor /release /quiet` console UX). Round-robin is
+  now signalled by a non-empty `turn_order`.
+- New optional policy hooks: `charter_text`, `dead_letter_target`,
+  `should_post_response`, `prompt_sections`.
+- Pluggable `RoomConfig.lease_checks` with structured `lease_denied`
+  events. Pluggable `RoomConfig.trigger_priority`. Pluggable
+  `RoomConfig.watchdog_interval_s` (dedicated coordinator watchdog
+  thread). Shape-based secret scrubber framework
+  (`register_secret_shape`).
+- Bus subscriber fan-out runs outside the bus lock — slow
+  subscribers no longer block readers/writers.
+
+**v0.3 — next** (in planning):
+
+- Controller mechanism: `RoomConfig.controller_ids` — chat events from
+  privileged participants open chained user turns. The CEO /
+  orchestrator pattern, structurally.
+- Async / off-lock policies for slow planning logic (LLM-backed
+  routing).
 - Automatic restart-recovery wiring from the journal.
-- Deep-frozen `RoomStateView` to remove leaf-level mutation paths.
-- Per-message rate limiting + per-participant cost budgets in the
-  public API.
-- Standalone PyPI package.
+- Policy-state snapshot/restore lifecycle hooks.
+
+**v0.4 — after** (sketched):
+
+- Structured `tool_call` / `tool_result` event kinds, tool channel
+  visibility, multi-step streaming loop, tools-as-participants
+  pattern.
+
+**v0.5 — exploratory:** `ClaudeCodeAgent` adapter + worktree-isolation
+convention for multi-Claude-Code orchestration under a CEO.
+
+Plus standalone PyPI packaging at any version.
 
 ## License
 

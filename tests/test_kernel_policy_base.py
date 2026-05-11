@@ -3,6 +3,7 @@
 The ABC lives at :mod:`loom.contracts` — neutral location so the kernel
 can import it without violating the kernel/policy boundary.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -28,6 +29,7 @@ class AbcEnforcement(unittest.TestCase):
     def test_subclass_without_plan_user_turn_is_abstract(self):
         class Bad(ConversationPolicy):  # noqa: D101
             pass
+
         with self.assertRaises(TypeError):
             Bad()  # type: ignore[abstract]
 
@@ -39,12 +41,10 @@ class AbcEnforcement(unittest.TestCase):
         self.assertFalse(plan.requires_response)
 
     def test_default_system_prompt_is_empty(self):
-        self.assertEqual(_NoopPolicy().system_prompt(
-            "loom", RoomState(config=RoomConfig())), "")
+        self.assertEqual(_NoopPolicy().system_prompt("loom", RoomState(config=RoomConfig())), "")
 
     def test_default_role_prompt_is_empty(self):
-        self.assertEqual(_NoopPolicy().role_prompt(
-            "loom", RoomState(config=RoomConfig())), "")
+        self.assertEqual(_NoopPolicy().role_prompt("loom", RoomState(config=RoomConfig())), "")
 
 
 class BundledPolicyContractCompliance(unittest.TestCase):
@@ -67,6 +67,7 @@ class BundledPolicyContractCompliance(unittest.TestCase):
     @staticmethod
     def _seeded_state() -> RoomState:
         from loom.kernel.room import ParticipantInfo
+
         s = RoomState(config=RoomConfig())
         s.add_participant(ParticipantInfo(id="loom", cost_tier=0))
         s.add_participant(ParticipantInfo(id="claude_code", cost_tier=1))
@@ -80,6 +81,7 @@ class BundledPolicyContractCompliance(unittest.TestCase):
         from loom.policy.open_chat import OpenChatPolicy
         from loom.policy.round_robin import RoundRobinPolicy
         from loom.policy.single_responder import SingleResponderPolicy
+
         return [
             DefaultPolicy(),
             OpenChatPolicy(),
@@ -97,8 +99,8 @@ class BundledPolicyContractCompliance(unittest.TestCase):
             state = self._seeded_state()
             plan = policy.plan_user_turn(e, state.view())
             self.assertIsInstance(
-                plan, UserTurnPlan,
-                f"{type(policy).__name__} returned non-plan: {plan!r}")
+                plan, UserTurnPlan, f"{type(policy).__name__} returned non-plan: {plan!r}"
+            )
 
     def test_no_policy_mutates_room_state(self):
         # Snapshot the live mutable state's identifying fields before
@@ -111,15 +113,22 @@ class BundledPolicyContractCompliance(unittest.TestCase):
             before_responder = state.default_responder_id
             before_anchor = state.anchor_id
             policy.plan_user_turn(e, state.view())
-            self.assertEqual(sorted(state.participants.keys()),
-                             before_pids,
-                             f"{type(policy).__name__} mutated participants")
-            self.assertEqual(state.room_epoch, before_epoch,
-                             f"{type(policy).__name__} bumped room_epoch")
-            self.assertEqual(state.default_responder_id, before_responder,
-                             f"{type(policy).__name__} changed responder")
-            self.assertEqual(state.anchor_id, before_anchor,
-                             f"{type(policy).__name__} changed anchor")
+            self.assertEqual(
+                sorted(state.participants.keys()),
+                before_pids,
+                f"{type(policy).__name__} mutated participants",
+            )
+            self.assertEqual(
+                state.room_epoch, before_epoch, f"{type(policy).__name__} bumped room_epoch"
+            )
+            self.assertEqual(
+                state.default_responder_id,
+                before_responder,
+                f"{type(policy).__name__} changed responder",
+            )
+            self.assertEqual(
+                state.anchor_id, before_anchor, f"{type(policy).__name__} changed anchor"
+            )
 
     def test_no_policy_posts_to_bus_during_planning(self):
         # The policy receives a state-view; it has no bus reference, but
@@ -142,16 +151,15 @@ class BundledPolicyContractCompliance(unittest.TestCase):
         # return a plan — typically an acknowledgement — rather than
         # raising. Used to be a real production bug for round-robin.
         from loom.kernel.room import ParticipantInfo
+
         e = Event(kind="chat", sender="user", body="hi")
         for policy in self._bundled_policies():
             state = RoomState(config=RoomConfig())
-            state.add_participant(ParticipantInfo(id="zombie",
-                                                  active=False))
+            state.add_participant(ParticipantInfo(id="zombie", active=False))
             try:
                 plan = policy.plan_user_turn(e, state.view())
             except Exception as exc:  # pragma: no cover
-                self.fail(f"{type(policy).__name__} raised on empty "
-                          f"active set: {exc!r}")
+                self.fail(f"{type(policy).__name__} raised on empty active set: {exc!r}")
             self.assertIsInstance(plan, UserTurnPlan)
 
 

@@ -4,6 +4,7 @@ Minimal: just a watchdog. The targeted tests don't need the heavy
 adversarial / multi-room fixtures from subsystem and system tiers —
 they exercise specific code paths via monkeypatch.
 """
+
 from __future__ import annotations
 
 import signal
@@ -14,8 +15,8 @@ import pytest
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
-        "markers",
-        "watchdog(seconds): override the default 30s watchdog ceiling")
+        "markers", "watchdog(seconds): override the default 30s watchdog ceiling"
+    )
 
 
 _DEFAULT_WATCHDOG_SECONDS = 30
@@ -27,7 +28,8 @@ class _WatchdogFired(Exception):
 
 def _signal_alarm_available() -> bool:
     return (
-        hasattr(signal, "SIGALRM") and hasattr(signal, "alarm")
+        hasattr(signal, "SIGALRM")
+        and hasattr(signal, "alarm")
         and threading.current_thread() is threading.main_thread()
     )
 
@@ -46,8 +48,7 @@ def coverage_watchdog(request: pytest.FixtureRequest):
         prev = signal.getsignal(signal.SIGALRM)
 
         def _handler(signum, frame):  # noqa: ARG001
-            raise _WatchdogFired(
-                f"watchdog fired after {seconds}s in {request.node.nodeid}")
+            raise _WatchdogFired(f"watchdog fired after {seconds}s in {request.node.nodeid}")
 
         signal.signal(signal.SIGALRM, _handler)
         signal.alarm(seconds)

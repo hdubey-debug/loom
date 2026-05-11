@@ -3,6 +3,7 @@
 Covers actor-error post-failure branch, pending direct-mention replay,
 and the linear-scan branch of `_lookup_event`.
 """
+
 from __future__ import annotations
 
 
@@ -94,9 +95,8 @@ def _open_turn_with_alice_addressed(bus, coord):
     coord.post_user_event_and_open_turn(
         e,
         lambda posted: plan_for_default(
-            "alice", reason="direct_mention",
-            target_event_ids=[posted.id],
-            rationale="@alice"),
+            "alice", reason="direct_mention", target_event_ids=[posted.id], rationale="@alice"
+        ),
     )
     return e.id
 

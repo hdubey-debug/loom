@@ -15,6 +15,7 @@ only the import surface is updated. The local ``it`` alias preserves
 the call shape (``it.classify(...)``, ``it.parse_addressees(...)``,
 ``it._GAME_END_RE``) so the 700+ assertions read identically.
 """
+
 from __future__ import annotations
 
 import types
@@ -85,42 +86,35 @@ it = types.SimpleNamespace(
 )
 
 
-def _state_with(*ids: str,
-                default_responder: str = "loom") -> RoomState:
+def _state_with(*ids: str, default_responder: str = "loom") -> RoomState:
     """Build a tiny RoomState with the given participant ids active+capable."""
     state = RoomState(config=RoomConfig())
     for pid in ids:
-        state.add_participant(ParticipantInfo(id=pid, capable=True,
-                                              active=True))
+        state.add_participant(ParticipantInfo(id=pid, capable=True, active=True))
     if default_responder in ids:
         state.set_default_responder(default_responder)
     return state
 
 
 def _user_chat(text: str, *, addressees=None) -> ev.Event:
-    return ev.chat(sender="user", body=text,
-                   addressees=list(addressees or []))
+    return ev.chat(sender="user", body=text, addressees=list(addressees or []))
 
 
 class ParseAddressees(unittest.TestCase):
     def test_basic(self):
-        out = it.parse_addressees("hi @loom please reply",
-                                  addressable=["loom", "claude_code"])
+        out = it.parse_addressees("hi @loom please reply", addressable=["loom", "claude_code"])
         self.assertEqual(out, ["loom"])
 
     def test_filters_unknown(self):
-        out = it.parse_addressees("@nope @loom @other",
-                                  addressable=["loom"])
+        out = it.parse_addressees("@nope @loom @other", addressable=["loom"])
         self.assertEqual(out, ["loom"])
 
     def test_dedup_preserves_order(self):
-        out = it.parse_addressees("@a @b @a hi @c @b",
-                                  addressable=["a", "b", "c"])
+        out = it.parse_addressees("@a @b @a hi @c @b", addressable=["a", "b", "c"])
         self.assertEqual(out, ["a", "b", "c"])
 
     def test_excludes_self(self):
-        out = it.parse_addressees("@a @b", addressable=["a", "b"],
-                                  exclude="a")
+        out = it.parse_addressees("@a @b", addressable=["a", "b"], exclude="a")
         self.assertEqual(out, ["b"])
 
 
@@ -145,14 +139,9 @@ class LastResponsibleSpeaker(unittest.TestCase):
     def test_filters_by_channel(self):
         bus = MessageBus()
         bus.post(ev.chat(sender="loom", body="main hi"))
-        bus.post(ev.chat(sender="claude_code", body="dm hi",
-                         channel="dm:user"))
-        self.assertEqual(it.last_responsible_speaker(bus,
-                                                     channel="main"),
-                         "loom")
-        self.assertEqual(it.last_responsible_speaker(bus,
-                                                     channel="dm:user"),
-                         "claude_code")
+        bus.post(ev.chat(sender="claude_code", body="dm hi", channel="dm:user"))
+        self.assertEqual(it.last_responsible_speaker(bus, channel="main"), "loom")
+        self.assertEqual(it.last_responsible_speaker(bus, channel="dm:user"), "claude_code")
 
 
 class DirectMention(unittest.TestCase):
@@ -343,10 +332,8 @@ class PriorSpeakerIgnored(unittest.TestCase):
         p_none = it.classify(e, state, prior_speaker=None)
         p_a = it.classify(e, state, prior_speaker="a")
         p_b = it.classify(e, state, prior_speaker="b")
-        self.assertEqual(p_none.required_participants,
-                         p_a.required_participants)
-        self.assertEqual(p_none.required_participants,
-                         p_b.required_participants)
+        self.assertEqual(p_none.required_participants, p_a.required_participants)
+        self.assertEqual(p_none.required_participants, p_b.required_participants)
         self.assertEqual(p_none.routing_case, "multi_opinion")
 
 
@@ -405,16 +392,14 @@ class VocativeAddressing(unittest.TestCase):
         state = _state_with("claude_code", "OAI", "gemini")
         e = _user_chat("I told claude to fix it but he refused")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants,
-                         {"claude_code", "OAI", "gemini"})
+        self.assertEqual(plan.required_participants, {"claude_code", "OAI", "gemini"})
 
     def test_name_as_subject_does_not_match(self):
         # Start-of-sentence subject (no comma/colon) is not vocative.
         state = _state_with("claude_code", "OAI", "gemini")
         e = _user_chat("claude knows about this stuff")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants,
-                         {"claude_code", "OAI", "gemini"})
+        self.assertEqual(plan.required_participants, {"claude_code", "OAI", "gemini"})
 
     def test_explicit_mention_overrides_vocative(self):
         # @-mention case wins even when text also has a vocative.
@@ -428,20 +413,17 @@ class VocativeAddressing(unittest.TestCase):
         # "you" / "guys" / "team" / "all" never narrow even though they
         # could look like names.
         state = _state_with("claude_code", "OAI", "gemini")
-        for text in ("guys, hi", "team, please look", "everyone, hello",
-                     "all, ok"):
+        for text in ("guys, hi", "team, please look", "everyone, hello", "all, ok"):
             with self.subTest(text=text):
                 e = _user_chat(text)
                 plan = it.classify(e, state, prior_speaker=None)
-                self.assertEqual(plan.required_participants,
-                                 {"claude_code", "OAI", "gemini"})
+                self.assertEqual(plan.required_participants, {"claude_code", "OAI", "gemini"})
 
     def test_unknown_name_does_not_match(self):
         state = _state_with("claude_code", "OAI", "gemini")
         e = _user_chat("nobody, please answer")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants,
-                         {"claude_code", "OAI", "gemini"})
+        self.assertEqual(plan.required_participants, {"claude_code", "OAI", "gemini"})
 
     def test_vocative_skipped_for_inactive(self):
         state = _state_with("claude_code", "OAI", "gemini")
@@ -449,19 +431,16 @@ class VocativeAddressing(unittest.TestCase):
         e = _user_chat("gemini, hello")
         plan = it.classify(e, state, prior_speaker=None)
         # gemini inactive → vocative drops out → broadcast to remaining.
-        self.assertEqual(plan.required_participants,
-                         {"claude_code", "OAI"})
+        self.assertEqual(plan.required_participants, {"claude_code", "OAI"})
 
     def test_ack_takes_priority_over_vocative(self):
         # "thanks" is a bare ack — never opens a turn even with a name
         # we could match. Plain "thanks" is the test case; "thanks claude"
         # is two words and still passes the vocative branch separately.
         state = _state_with("claude_code", "OAI", "gemini")
-        plan_ack = it.classify(_user_chat("thanks"), state,
-                               prior_speaker=None)
+        plan_ack = it.classify(_user_chat("thanks"), state, prior_speaker=None)
         self.assertFalse(plan_ack.requires_response)
-        plan_voc = it.classify(_user_chat("thanks claude"), state,
-                               prior_speaker=None)
+        plan_voc = it.classify(_user_chat("thanks claude"), state, prior_speaker=None)
         self.assertTrue(plan_voc.requires_response)
         self.assertEqual(plan_voc.required_participants, {"claude_code"})
 
@@ -470,8 +449,7 @@ class VocativeAddressing(unittest.TestCase):
         state = _state_with("claude_code", "OAI", "gemini")
         e = _user_chat("claude, what do you think gemini")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants,
-                         {"claude_code", "gemini"})
+        self.assertEqual(plan.required_participants, {"claude_code", "gemini"})
         self.assertEqual(plan.routing_case, "multi_opinion")
 
     def test_helper_aliases_for_uses_underscore_segment(self):
@@ -494,8 +472,7 @@ class VocativeAddressing(unittest.TestCase):
         self.assertEqual(it._detect_vocative("claude, hi", []), [])
 
     def test_helper_detect_vocative_excludes_self(self):
-        out = it._detect_vocative("claude, hi", ["claude_code"],
-                                  exclude="claude_code")
+        out = it._detect_vocative("claude, hi", ["claude_code"], exclude="claude_code")
         self.assertEqual(out, [])
 
 
@@ -634,8 +611,7 @@ class RoundRobinRotation(unittest.TestCase):
         for pid in ("a", "b", "c"):
             state.set_active(pid, False)
         # Re-add an active participant outside the order.
-        state.add_participant(ParticipantInfo(id="d", capable=True,
-                                              active=True))
+        state.add_participant(ParticipantInfo(id="d", capable=True, active=True))
         e = _user_chat("anyone there?")
         plan = it.classify(e, state, prior_speaker=None)
         # Falls through to broadcast (Case 6) since rotation has no live.
@@ -701,10 +677,8 @@ class GameSimulation(unittest.TestCase):
 
         # 1. User: "lets play a game guys" → broadcast for opening,
         # round-robin enabled with sorted order.
-        plan1 = it.classify(_user_chat("lets play a game guys"),
-                            state, prior_speaker=None)
-        self.assertEqual(plan1.set_turn_order,
-                         ["OAI", "claude_code", "gemini"])
+        plan1 = it.classify(_user_chat("lets play a game guys"), state, prior_speaker=None)
+        self.assertEqual(plan1.set_turn_order, ["OAI", "claude_code", "gemini"])
         # Apply the plan-driven changes (the coordinator does this in
         # production via _apply_plan_state_changes_locked). The
         # non-empty turn_order is itself the round-robin arm signal.
@@ -718,8 +692,7 @@ class GameSimulation(unittest.TestCase):
         state.advance_round_robin_pointer()
 
         # 3. User: "yes, alive" — idx 1 → claude_code.
-        plan3 = it.classify(_user_chat("yes, alive"), state,
-                            prior_speaker=None)
+        plan3 = it.classify(_user_chat("yes, alive"), state, prior_speaker=None)
         self.assertEqual(plan3.required_participants, {"claude_code"})
         state.advance_round_robin_pointer()
 
@@ -733,8 +706,7 @@ class GameSimulation(unittest.TestCase):
         self.assertEqual(plan5.required_participants, {"OAI"})
 
         # 6. User: "good game" — exit mode, no turn opens.
-        plan6 = it.classify(_user_chat("good game"), state,
-                            prior_speaker=None)
+        plan6 = it.classify(_user_chat("good game"), state, prior_speaker=None)
         self.assertFalse(plan6.requires_response)
         self.assertEqual(plan6.set_turn_order, [])
         # After applying, mode is back to broadcast (empty turn_order).
@@ -743,8 +715,7 @@ class GameSimulation(unittest.TestCase):
 
         # 7. Next message — broadcast resumes.
         plan7 = it.classify(_user_chat("hello"), state, prior_speaker=None)
-        self.assertEqual(plan7.allowed_speakers,
-                         {"OAI", "claude_code", "gemini"})
+        self.assertEqual(plan7.allowed_speakers, {"OAI", "claude_code", "gemini"})
 
 
 if __name__ == "__main__":

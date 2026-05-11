@@ -87,6 +87,7 @@ Custom kernels and prompt machinery live under :mod:`loom.kernel.*` —
 advanced; library examples and bundled docs MUST NOT import from
 ``loom.kernel.*``.
 """
+
 from loom.adapters import agent_from_object, agent_from_send, agent_from_stream
 from loom.contracts import Agent, ConversationPolicy
 from loom.errors import LoomError

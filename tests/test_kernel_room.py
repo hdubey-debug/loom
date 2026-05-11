@@ -10,6 +10,7 @@ Covers:
 - Cheapest-active-capable picks lowest cost_tier, ties broken by id.
 - Inactive or non-capable participants are excluded from fallback.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -151,15 +152,13 @@ class CheapestActiveCapable(unittest.TestCase):
 
     def test_skips_inactive(self):
         s = _state()
-        s.add_participant(ParticipantInfo(id="loom", cost_tier=0,
-                                          active=False))
+        s.add_participant(ParticipantInfo(id="loom", cost_tier=0, active=False))
         s.add_participant(ParticipantInfo(id="claude_code", cost_tier=2))
         self.assertEqual(s.cheapest_active_capable(), "claude_code")
 
     def test_skips_incapable(self):
         s = _state()
-        s.add_participant(ParticipantInfo(id="observer", cost_tier=0,
-                                          capable=False))
+        s.add_participant(ParticipantInfo(id="observer", cost_tier=0, capable=False))
         s.add_participant(ParticipantInfo(id="claude_code", cost_tier=2))
         self.assertEqual(s.cheapest_active_capable(), "claude_code")
 
@@ -177,10 +176,8 @@ class SlotResolution(unittest.TestCase):
     def setUp(self):
         self.s = _state()
         self.s.add_participant(ParticipantInfo(id="loom", cost_tier=0))
-        self.s.add_participant(ParticipantInfo(id="claude_code",
-                                               cost_tier=2))
-        self.s.add_participant(ParticipantInfo(id="gemini_cli",
-                                               cost_tier=1))
+        self.s.add_participant(ParticipantInfo(id="claude_code", cost_tier=2))
+        self.s.add_participant(ParticipantInfo(id="gemini_cli", cost_tier=1))
         self.s.set_default_responder("claude_code")
         self.s.set_anchor("claude_code")
 
@@ -388,8 +385,7 @@ class ParticipantInfoViewIsFrozen(unittest.TestCase):
 
     def test_attribute_reassignment_raises(self):
         state = RoomState(config=RoomConfig())
-        state.add_participant(ParticipantInfo(id="a", capable=True,
-                                              cost_tier=1, active=True))
+        state.add_participant(ParticipantInfo(id="a", capable=True, cost_tier=1, active=True))
         view = state.view()
         info_view = view.participants["a"]
         with self.assertRaises(dataclasses.FrozenInstanceError):
@@ -401,8 +397,7 @@ class ParticipantInfoViewIsFrozen(unittest.TestCase):
 
     def test_role_hints_mapping_is_read_only(self):
         state = RoomState(config=RoomConfig())
-        state.add_participant(ParticipantInfo(id="a",
-                                              role_hints={"role": "teacher"}))
+        state.add_participant(ParticipantInfo(id="a", role_hints={"role": "teacher"}))
         view = state.view()
         info_view = view.participants["a"]
         with self.assertRaises(TypeError):

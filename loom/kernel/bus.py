@@ -42,6 +42,7 @@ Security contract (see ``docs/security-model.md``):
   cache key MUST include audience or DMs will silently misroute
   (audit finding D2).
 """
+
 from __future__ import annotations
 
 from typing import Callable, Iterable, Optional
@@ -72,6 +73,7 @@ class _KernelAuth:
     ``auth is _KERNEL_AUTH`` by identity, so a different
     ``_KernelAuth()`` constructed from elsewhere does not unlock it).
     """
+
     __slots__ = ()
 
 
@@ -239,7 +241,8 @@ class MessageBus:
             raise RuntimeError(
                 "post_internal requires the kernel-private _KERNEL_AUTH "
                 "token; this method is reserved for kernel-internal "
-                "callers (coordinator/runtime/journal/actor crash path)")
+                "callers (coordinator/runtime/journal/actor crash path)"
+            )
         return self._post_unchecked(ev)
 
     def _post_unchecked(self, ev: Event) -> int:
@@ -269,7 +272,8 @@ class MessageBus:
                 raise BodyOversizeError(
                     f"{ev.kind} body of {len(body)} bytes exceeds "
                     f"max_body_bytes={self._max_body_bytes}; truncate "
-                    "at the proxy boundary or raise the bus cap")
+                    "at the proxy boundary or raise the bus cap"
+                )
         with self._cond:
             if self._stopped:
                 return -1
@@ -313,7 +317,8 @@ class MessageBus:
             if existing is not None and existing != actor_id:
                 raise RuntimeError(
                     f"thread {tid} is already bound to actor {existing!r}; "
-                    f"refusing to rebind to {actor_id!r}")
+                    f"refusing to rebind to {actor_id!r}"
+                )
             self._thread_actors[tid] = actor_id
 
         def _unbind() -> None:
@@ -337,8 +342,7 @@ class MessageBus:
         with self._cond:
             self._thread_actors.pop(tid, None)
 
-    def bound_actor_for(self, thread_ident: Optional[int] = None
-                         ) -> Optional[str]:
+    def bound_actor_for(self, thread_ident: Optional[int] = None) -> Optional[str]:
         """Return the actor id bound to ``thread_ident`` (default: current)."""
         tid = thread_ident if thread_ident is not None else threading.get_ident()
         with self._cond:
@@ -432,8 +436,7 @@ class MessageBus:
         store it is harmless (idempotent). This keeps the prompt-build
         path off the bus lock.
         """
-        cache = (self._render_chat_main_cache if scope == "main"
-                 else self._render_chat_dm_cache)
+        cache = self._render_chat_main_cache if scope == "main" else self._render_chat_dm_cache
         cached = cache.get(ev.id)
         if cached is not None:
             return cached

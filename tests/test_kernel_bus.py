@@ -1,4 +1,5 @@
 """Tests for ``loom.kernel.bus`` — the MessageBus."""
+
 from __future__ import annotations
 
 import json
@@ -39,10 +40,7 @@ class PostingAssignsIds(unittest.TestCase):
             for i in range(25):
                 bus.post(ev.chat(sender=f"p{pid}", body=f"{pid}:{i}"))
 
-        threads = [
-            threading.Thread(target=producer, args=(i,))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=producer, args=(i,)) for i in range(5)]
         for t in threads:
             t.start()
         start.wait(timeout=1.0)
@@ -71,8 +69,8 @@ class WaitAfter(unittest.TestCase):
 
         t = threading.Thread(target=waiter)
         t.start()
-        time.sleep(0.05)            # let the waiter start blocking
-        self.assertEqual(result, []) # still blocked
+        time.sleep(0.05)  # let the waiter start blocking
+        self.assertEqual(result, [])  # still blocked
         bus.post(ev.chat(sender="user", body="hi"))
         t.join(timeout=1.0)
         self.assertEqual(result, [1])
@@ -104,10 +102,8 @@ class SnapshotFilters(unittest.TestCase):
     def setUp(self):
         self.bus = MessageBus()
         self.bus.post(ev.chat(sender="user", body="public hi"))
-        self.bus.post(ev.chat(sender="user", body="psst",
-                              channel="dm:claude_code"))
-        self.bus.post(ev.chat(sender="claude_code", body="back at you",
-                              channel="dm:claude_code"))
+        self.bus.post(ev.chat(sender="user", body="psst", channel="dm:claude_code"))
+        self.bus.post(ev.chat(sender="claude_code", body="back at you", channel="dm:claude_code"))
         self.bus.post(ev.system("session started"))
         self.bus.post(ev.topic_changed(None, "the moon"))
 
@@ -151,8 +147,7 @@ class SnapshotFilters(unittest.TestCase):
         self.assertEqual([e.id for e in snap], [2, 3, 4])
 
     def test_combine_channel_and_audience(self):
-        snap = self.bus.snapshot(channel="dm:claude_code",
-                                 audience="gemini_cli")
+        snap = self.bus.snapshot(channel="dm:claude_code", audience="gemini_cli")
         self.assertEqual(snap, [])
 
     def test_combine_kinds_and_since(self):
@@ -294,8 +289,11 @@ class RenderMemo(unittest.TestCase):
     def test_control_line_renders_expected_shape(self):
         bus = MessageBus()
         e = ev.user_turn_opened(
-            user_turn_id=1, routing_case="direct_mention",
-            required_participants=["bob"], rationale="@bob")
+            user_turn_id=1,
+            routing_case="direct_mention",
+            required_participants=["bob"],
+            rationale="@bob",
+        )
         bus.post(e)
         line = bus.render_control_line(e)
         d = json.loads(line)
@@ -327,6 +325,7 @@ class LockReleasedFanOut(unittest.TestCase):
         # subscriber returned.
         import threading as _t
         import time as _time
+
         bus = MessageBus()
         slow_called = _t.Event()
         slow_release = _t.Event()
@@ -356,9 +355,11 @@ class LockReleasedFanOut(unittest.TestCase):
         self.assertEqual(len(snap), 1)
         self.assertIsNotNone(got)
         self.assertLess(
-            elapsed, 0.1,
+            elapsed,
+            0.1,
             f"reader paths blocked for {elapsed:.3f}s — bus lock "
-            "must be released before subscriber fan-out")
+            "must be released before subscriber fan-out",
+        )
 
         # Release the slow callback so the stuck thread can finish.
         slow_release.set()
@@ -403,6 +404,7 @@ class KernelAuthRequired(unittest.TestCase):
 
     def test_kernel_auth_not_re_exported_from_loom_init(self):
         import loom
+
         # The token is module-private to loom.kernel.bus and must not
         # leak into the public ``loom`` surface.
         self.assertFalse(hasattr(loom, "_KERNEL_AUTH"))

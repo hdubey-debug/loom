@@ -3,6 +3,7 @@
 Invariant: ``Event.from_jsonl(e.to_jsonl()) == e`` for every event kind
 and field combination, including the reserved ``id``/``ts`` slots.
 """
+
 from __future__ import annotations
 
 from hypothesis import given

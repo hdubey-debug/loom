@@ -29,6 +29,7 @@ proxy that prefers structured messages can split on the well-known
 section markers (``<<<SYSTEM PREAMBLE>>>``, ``<<<TRANSCRIPT BEGIN>>>``,
 ``<<<TRIGGER>>>``, ``<<<TURN CARD>>>``).
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Protocol
@@ -103,6 +104,7 @@ Anchor / default-responder role:
 # concrete ABC arrives at loom.contracts in step 13).
 # ---------------------------------------------------------------------------
 
+
 class _PolicyLike(Protocol):
     """Structural type for the prompt's ``policy`` parameter.
 
@@ -112,10 +114,8 @@ class _PolicyLike(Protocol):
     :class:`DefaultPolicy`.
     """
 
-    def system_prompt(self, participant_id: str,
-                      state: RoomStateView) -> str: ...
-    def role_prompt(self, participant_id: str,
-                    state: RoomStateView) -> str: ...
+    def system_prompt(self, participant_id: str, state: RoomStateView) -> str: ...
+    def role_prompt(self, participant_id: str, state: RoomStateView) -> str: ...
 
 
 class _FallbackPolicy:
@@ -133,26 +133,28 @@ class _FallbackPolicy:
     def charter_text(self, state: RoomStateView) -> str:
         return ""
 
-    def system_prompt(self, participant_id: str,
-                      state: RoomStateView) -> str:
+    def system_prompt(self, participant_id: str, state: RoomStateView) -> str:
         return ""
 
-    def role_prompt(self, participant_id: str,
-                    state: RoomStateView) -> str:
-        anchor_roles = {pid for pid in (state.anchor_id,
-                                        state.default_responder_id) if pid}
+    def role_prompt(self, participant_id: str, state: RoomStateView) -> str:
+        anchor_roles = {pid for pid in (state.anchor_id, state.default_responder_id) if pid}
         if participant_id in anchor_roles:
             return ANCHOR_SYNTHESIS_INSTRUCTIONS
         return ""
 
 
 _STYLE_LENGTH_HINT = {
-    "brief": ("Keep your reply tight: one or two short sentences. "
-              "No preamble, no bullet lists unless directly asked."),
-    "normal": ("Keep your reply focused: one short paragraph or up to "
-               "five short bullets — no lectures."),
-    "detailed": ("Detailed replies allowed: take the room through the "
-                 "reasoning step by step, but stay on point."),
+    "brief": (
+        "Keep your reply tight: one or two short sentences. "
+        "No preamble, no bullet lists unless directly asked."
+    ),
+    "normal": (
+        "Keep your reply focused: one short paragraph or up to five short bullets — no lectures."
+    ),
+    "detailed": (
+        "Detailed replies allowed: take the room through the "
+        "reasoning step by step, but stay on point."
+    ),
 }
 
 
@@ -167,6 +169,7 @@ _STYLE_LENGTH_HINT = {
 # XML-style fence and neutralizes the two specific sequences a hostile
 # value would use to break out: our protocol section markers (``<<<...>>>``)
 # and the field's own closing tag.
+
 
 def _escape_system_value(value: object, fence_name: str) -> str:
     """Neutralize sequences that would break the system-field fence.
@@ -209,8 +212,7 @@ def _render_system_field(name: str, value: object) -> str:
     helper is the structural half of that contract.
     """
     if not isinstance(name, str) or not name.isidentifier():
-        raise ValueError(
-            f"system-field name must be a Python identifier: {name!r}")
+        raise ValueError(f"system-field name must be a Python identifier: {name!r}")
     if value is None:
         return ""
     text = "" if value is None else str(value)
@@ -222,6 +224,7 @@ def _render_system_field(name: str, value: object) -> str:
 # ---------------------------------------------------------------------------
 # Transcript rendering
 # ---------------------------------------------------------------------------
+
 
 def _render_chat_line(event: Event, scope: str) -> str:
     """JSON-line representation of a chat event for the transcript block.
@@ -266,9 +269,7 @@ def _render_control_line(event: Event) -> str:
     )
 
 
-def _trigger_label(actor_id: str,
-                   coordinator: RoomCoordinator,
-                   trigger: Optional[Event]) -> str:
+def _trigger_label(actor_id: str, coordinator: RoomCoordinator, trigger: Optional[Event]) -> str:
     """One of REQUIRED / REQUIRED — should / OPTIONAL / NO OBLIGATION.
 
     Looks at the current user turn's obligations for ``actor_id`` and
@@ -289,9 +290,7 @@ def _trigger_label(actor_id: str,
     return "OPTIONAL"
 
 
-def _render_trigger(event: Optional[Event],
-                    actor_id: str,
-                    coordinator: RoomCoordinator) -> str:
+def _render_trigger(event: Optional[Event], actor_id: str, coordinator: RoomCoordinator) -> str:
     """Compact pointer at the event that triggered this wakeup.
 
     The detailed "what to do" framing now lives in the TURN CARD; the
@@ -301,9 +300,7 @@ def _render_trigger(event: Optional[Event],
     label = _trigger_label(actor_id, coordinator, event)
 
     if event is None:
-        return (
-            "TRIGGER: (none — idle wakeup). Default behavior is [PASS]."
-        )
+        return "TRIGGER: (none — idle wakeup). Default behavior is [PASS]."
 
     if event.kind == "control" and isinstance(event.body, dict):
         ct = control_type_of(event)
@@ -317,19 +314,14 @@ def _render_trigger(event: Optional[Event],
             )
 
     if event.kind == "chat":
-        if (event.sender == "user" and actor_id in event.addressees):
+        if event.sender == "user" and actor_id in event.addressees:
             return (
                 f"TRIGGER [{label}]: chat event id {event.id} — "
                 f"{event.sender!r} addressed you directly with @{actor_id}."
             )
-        return (
-            f"TRIGGER [{label}]: chat event id {event.id} from "
-            f"{event.sender!r}."
-        )
+        return f"TRIGGER [{label}]: chat event id {event.id} from {event.sender!r}."
 
-    return (
-        f"TRIGGER [{label}]: event id {event.id}, kind={event.kind!r}."
-    )
+    return f"TRIGGER [{label}]: event id {event.id}, kind={event.kind!r}."
 
 
 # ---------------------------------------------------------------------------
@@ -340,9 +332,8 @@ def _render_trigger(event: Optional[Event],
 # ``LOOM_PROTOCOL_INSTRUCTIONS`` and never change between turns.
 # ---------------------------------------------------------------------------
 
-def _render_turn_card(actor_id: str,
-                      coordinator: RoomCoordinator,
-                      trigger: Optional[Event]) -> str:
+
+def _render_turn_card(actor_id: str, coordinator: RoomCoordinator, trigger: Optional[Event]) -> str:
     """Build the per-turn TURN CARD section for ``actor_id``.
 
     Always renders — even for non-selected actors (in which case the
@@ -362,15 +353,15 @@ def _render_turn_card(actor_id: str,
         if role:
             lines.append(f"- Your current role: {role}")
         lines.append(
-            "- Default behavior: emit [PASS] (literal token, "
-            "very start of reply, nothing else).")
+            "- Default behavior: emit [PASS] (literal token, very start of reply, nothing else)."
+        )
         return "\n".join(lines)
 
     plan = ut.frozen_plan
-    in_allowed = bool(plan.allowed_speakers
-                      and actor_id in plan.allowed_speakers)
+    in_allowed = bool(plan.allowed_speakers and actor_id in plan.allowed_speakers)
     is_user_mention = bool(
-        trigger and trigger.kind == "chat"
+        trigger
+        and trigger.kind == "chat"
         and trigger.sender == "user"
         and actor_id in trigger.addressees
     )
@@ -382,8 +373,8 @@ def _render_turn_card(actor_id: str,
 
     if not selected:
         lines.append(
-            "- Default behavior: emit [PASS] (literal token, "
-            "very start of reply, nothing else).")
+            "- Default behavior: emit [PASS] (literal token, very start of reply, nothing else)."
+        )
         return "\n".join(lines)
 
     ob = ut.obligation_for(actor_id)
@@ -403,22 +394,20 @@ def _render_turn_card(actor_id: str,
         lines.append(_render_system_field("instruction", plan.instruction))
     lines.append(f"- Max length: {_STYLE_LENGTH_HINT[control.style]}")
     if plan.wait_for_user_after:
-        lines.append(
-            "- After responding: stop and wait for the user. Do not "
-            "invite other agents.")
+        lines.append("- After responding: stop and wait for the user. Do not invite other agents.")
     else:
         lines.append(
             "- After responding: other agents may also reply this "
-            "turn; the room closes when the response cap is reached.")
-    lines.append(
-        "- Do not invite other agents unless this card explicitly "
-        "asks you to.")
+            "turn; the room closes when the response cap is reached."
+        )
+    lines.append("- Do not invite other agents unless this card explicitly asks you to.")
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build_prompt(
     actor_id: str,
@@ -500,14 +489,12 @@ def build_prompt(
         # PI1 / P0.8: capability_block is runtime-supplied; fence gives
         # the LLM the same data-not-instructions framing as topic /
         # persona regardless of caller hygiene.
-        system_parts.append(
-            _render_system_field("capabilities", capability_block))
+        system_parts.append(_render_system_field("capabilities", capability_block))
 
     other_participants = [p for p in state.participants if p != actor_id]
     if other_participants:
         system_parts.append(
-            "Other participants you may @-mention: "
-            + ", ".join(sorted(other_participants))
+            "Other participants you may @-mention: " + ", ".join(sorted(other_participants))
         )
 
     # Policy-supplied extra sections (v0.2 ``prompt_sections`` hook).
@@ -517,11 +504,14 @@ def build_prompt(
     _sections_fn = getattr(policy, "prompt_sections", None)
     if _sections_fn is not None:
         try:
-            extra_sections = _sections_fn(
-                state=state_view,
-                participant_id=actor_id,
-                trigger_event=trigger_event,
-            ) or []
+            extra_sections = (
+                _sections_fn(
+                    state=state_view,
+                    participant_id=actor_id,
+                    trigger_event=trigger_event,
+                )
+                or []
+            )
         except Exception:
             extra_sections = []
         for section in extra_sections:
@@ -537,25 +527,29 @@ def build_prompt(
     # ------------------------------------------------------------------
     summary_block = ""
     main_summaries = bus.snapshot(
-        audience=actor_id, channel="main", kinds=["summary"],
+        audience=actor_id,
+        channel="main",
+        kinds=["summary"],
     )
     if main_summaries:
         latest = main_summaries[-1]
         summary_block = (
-            "<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n"
-            f"{latest.body}\n"
-            "<<<END SUMMARY>>>"
+            f"<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n{latest.body}\n<<<END SUMMARY>>>"
         )
 
     # ------------------------------------------------------------------
     # 3. Transcript (sandboxed)
     # ------------------------------------------------------------------
     main_chats = bus.snapshot(
-        audience=actor_id, channel="main", kinds=["chat"],
+        audience=actor_id,
+        channel="main",
+        kinds=["chat"],
     )
     main_recent = main_chats[-n_recent:]
     dm_events = bus.snapshot(
-        audience=actor_id, channel=f"dm:{actor_id}", kinds=["chat"],
+        audience=actor_id,
+        channel=f"dm:{actor_id}",
+        kinds=["chat"],
     )
 
     # Prompt rendering goes through the bus's memo so each event is
@@ -573,12 +567,15 @@ def build_prompt(
         # event history just to filter it out.
         since = main_recent[0].id - 1 if main_recent else None
         controls = bus.snapshot(
-            audience=actor_id, channel="main", kinds=["control"],
+            audience=actor_id,
+            channel="main",
+            kinds=["control"],
             since=since,
         )
         chrono = sorted(main_recent + controls, key=lambda x: x.id)
         lines = [
-            bus.render_chat_line(e, scope="main") if e.kind == "chat"
+            bus.render_chat_line(e, scope="main")
+            if e.kind == "chat"
             else bus.render_control_line(e)
             for e in chrono
         ]
@@ -594,16 +591,14 @@ def build_prompt(
     # ------------------------------------------------------------------
     # 4. Trigger annotation
     # ------------------------------------------------------------------
-    trigger_block = "<<<TRIGGER>>>\n" + _render_trigger(
-        trigger_event, actor_id, coordinator)
+    trigger_block = "<<<TRIGGER>>>\n" + _render_trigger(trigger_event, actor_id, coordinator)
 
     # ------------------------------------------------------------------
     # 5. Turn card — per-turn control: selected, role, instruction,
     # max length, wait_for_user_after. The dynamic axis lives here so
     # ``LOOM_PROTOCOL_INSTRUCTIONS`` can stay stable across turns.
     # ------------------------------------------------------------------
-    turn_card_block = _render_turn_card(
-        actor_id, coordinator, trigger_event)
+    turn_card_block = _render_turn_card(actor_id, coordinator, trigger_event)
 
     parts: list[str] = ["\n".join(system_parts)]
     if summary_block:

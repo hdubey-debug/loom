@@ -14,6 +14,7 @@ The coordinator owns all state mutation. UserTurn here is a pure
 dataclass + helpers; closure-detection helpers below return booleans
 the coordinator interprets.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,8 +30,13 @@ from loom.kernel.obligations import (
 
 UserTurnState = Literal["open", "closing", "closed"]
 ClosureReason = Literal[
-    "completed", "idle_timeout", "new_user_post", "cancelled",
-    "topic_changed", "no_responder", "obligation_unresolved",
+    "completed",
+    "idle_timeout",
+    "new_user_post",
+    "cancelled",
+    "topic_changed",
+    "no_responder",
+    "obligation_unresolved",
 ]
 
 
@@ -88,9 +94,9 @@ class UserTurn:
     # Bookkeeping
     # ------------------------------------------------------------------
 
-    def mark_drafted(self, participant_id: str,
-                     *, count_toward_cap: bool = True,
-                     now: Optional[float] = None) -> None:
+    def mark_drafted(
+        self, participant_id: str, *, count_toward_cap: bool = True, now: Optional[float] = None
+    ) -> None:
         """Record that ``participant_id`` drafted in this UserTurn.
 
         ``count_toward_cap=False`` is for direct-mention replies that
@@ -101,15 +107,13 @@ class UserTurn:
         authoritative "did they reply at all" signal.
         """
         if count_toward_cap:
-            self.speaker_counts[participant_id] = (
-                self.speaker_counts.get(participant_id, 0) + 1
-            )
+            self.speaker_counts[participant_id] = self.speaker_counts.get(participant_id, 0) + 1
         self.drafted.add(participant_id)
         self.last_activity_at = now if now is not None else time.monotonic()
 
-    def mark_obligation_resolved(self, obligation_id: int,
-                                 *, by_event_id: Optional[int],
-                                 now: Optional[float] = None) -> bool:
+    def mark_obligation_resolved(
+        self, obligation_id: int, *, by_event_id: Optional[int], now: Optional[float] = None
+    ) -> bool:
         """Mark an obligation resolved. Returns True if an open obligation was found.
 
         ``by_event_id`` references the committed chat event that
@@ -156,8 +160,7 @@ class UserTurn:
         self.state = "closed"
         self.closure_reason = reason
 
-    def is_idle(self, *, idle_timeout_s: float,
-                now: Optional[float] = None) -> bool:
+    def is_idle(self, *, idle_timeout_s: float, now: Optional[float] = None) -> bool:
         now = now if now is not None else time.monotonic()
         return (now - self.last_activity_at) >= idle_timeout_s
 
@@ -199,8 +202,9 @@ def is_user_turn_complete(turn: UserTurn) -> bool:
     return not turn.unresolved_required()
 
 
-def should_open_new_user_turn(prev_user_post_ts: Optional[float],
-                              now: float, debounce_ms: int) -> bool:
+def should_open_new_user_turn(
+    prev_user_post_ts: Optional[float], now: float, debounce_ms: int
+) -> bool:
     """Debounce decision for a new user post.
 
     Returns True if the new post is far enough past the previous user
@@ -213,11 +217,14 @@ def should_open_new_user_turn(prev_user_post_ts: Optional[float],
     return (now - prev_user_post_ts) * 1000 >= debounce_ms
 
 
-def make_user_turn(turn_id: int, user_event_id: int,
-                   plan: UserTurnPlan,
-                   *, started_at: Optional[float] = None,
-                   next_obligation_id: Optional[int] = None,
-                   ) -> tuple[UserTurn, int]:
+def make_user_turn(
+    turn_id: int,
+    user_event_id: int,
+    plan: UserTurnPlan,
+    *,
+    started_at: Optional[float] = None,
+    next_obligation_id: Optional[int] = None,
+) -> tuple[UserTurn, int]:
     """Build a new :class:`UserTurn` from a plan, allocating obligation ids.
 
     Returns ``(turn, next_id_after_allocation)`` so the coordinator

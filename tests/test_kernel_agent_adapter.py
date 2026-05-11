@@ -5,6 +5,7 @@ Each helper produces an :class:`Agent`-shaped object that:
 - yields chunks from :meth:`stream`,
 - can be drop-in for :class:`loom.kernel.streaming.StreamingProxy`.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -23,8 +24,8 @@ from loom.contracts import Agent
 # _extract_text
 # ---------------------------------------------------------------------------
 
-class ExtractText(unittest.TestCase):
 
+class ExtractText(unittest.TestCase):
     def test_str_passthrough(self):
         self.assertEqual(_extract_text("hello"), "hello")
 
@@ -49,6 +50,7 @@ class ExtractText(unittest.TestCase):
         class X:
             def __str__(self) -> str:
                 return "fallback"
+
         self.assertEqual(_extract_text(X()), "fallback")
 
     def test_text_wins_over_body(self):
@@ -60,8 +62,8 @@ class ExtractText(unittest.TestCase):
 # agent_from_send
 # ---------------------------------------------------------------------------
 
-class AgentFromSend(unittest.TestCase):
 
+class AgentFromSend(unittest.TestCase):
     def test_basic_string_response(self):
         a = agent_from_send("gpt", lambda p: "hello world")
         chunks = list(a.stream("ping"))
@@ -77,7 +79,8 @@ class AgentFromSend(unittest.TestCase):
 
     def test_custom_metadata(self):
         a = agent_from_send(
-            "gpt", lambda p: "x",
+            "gpt",
+            lambda p: "x",
             persona="GPT-4 helper",
             capability_block="text + tool use",
             cost_tier=2,
@@ -136,6 +139,7 @@ class AgentFromSend(unittest.TestCase):
     def test_cancel_swallows_user_exception(self):
         def cancel():
             raise RuntimeError("boom")
+
         a = agent_from_send("x", lambda p: "x", cancel_fn=cancel)
         # Must not propagate.
         a.cancel()
@@ -145,8 +149,8 @@ class AgentFromSend(unittest.TestCase):
 # agent_from_stream
 # ---------------------------------------------------------------------------
 
-class AgentFromStream(unittest.TestCase):
 
+class AgentFromStream(unittest.TestCase):
     def test_passes_chunks_through(self):
         a = agent_from_stream("x", lambda p: ["a", "b", "c"])
         self.assertEqual(list(a.stream("p")), ["a", "b", "c"])
@@ -202,8 +206,8 @@ class AgentFromStream(unittest.TestCase):
 # agent_from_object
 # ---------------------------------------------------------------------------
 
-class AgentFromObject(unittest.TestCase):
 
+class AgentFromObject(unittest.TestCase):
     def test_prefers_stream_over_send(self):
         class Both:
             id = "ignored"
@@ -245,8 +249,7 @@ class AgentFromObject(unittest.TestCase):
             persona="resident",
             cost_tier=5,
         )
-        a = agent_from_object(
-            "x", obj, persona="override", cost_tier=2)
+        a = agent_from_object("x", obj, persona="override", cost_tier=2)
         self.assertEqual(a.persona, "override")
         self.assertEqual(a.cost_tier, 2)
 
@@ -255,6 +258,7 @@ class AgentFromObject(unittest.TestCase):
         class Bare:
             def send(self, p):
                 return "x"
+
         a = agent_from_object("x", Bare())
         self.assertEqual(a.persona, "")
         self.assertEqual(a.capability_block, "")
@@ -264,6 +268,7 @@ class AgentFromObject(unittest.TestCase):
     def test_neither_stream_nor_send_raises(self):
         class Bad:
             pass
+
         with self.assertRaises(TypeError):
             agent_from_object("x", Bad())
 
@@ -285,6 +290,7 @@ class AgentFromObject(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Agent Protocol satisfaction
 # ---------------------------------------------------------------------------
+
 
 class ProtocolSatisfaction(unittest.TestCase):
     """Adapter outputs duck-type as :class:`Agent`."""
@@ -326,6 +332,7 @@ class ProtocolSatisfaction(unittest.TestCase):
 # Slot conservation
 # ---------------------------------------------------------------------------
 
+
 class FunctionAgentSlots(unittest.TestCase):
     """`_FunctionAgent` uses ``__slots__`` to keep instances small."""
 
@@ -345,6 +352,7 @@ class FunctionAgentSlots(unittest.TestCase):
 # attributes.
 # ---------------------------------------------------------------------------
 
+
 class AdapterScenarios(unittest.TestCase):
     """Drive every adapter through the kernel streaming layer.
 
@@ -363,27 +371,33 @@ class AdapterScenarios(unittest.TestCase):
         from loom.kernel.coordinator import RoomCoordinator
         from loom.kernel.obligations import plan_for_default
         from loom.kernel.room import (
-            ParticipantInfo, RoomConfig, RoomState,
+            ParticipantInfo,
+            RoomConfig,
+            RoomState,
         )
         from loom.kernel.streaming import run_streaming_call
 
         bus = MessageBus()
-        state = RoomState(config=RoomConfig(
-            pass_buffer_chars=16, lease_ttl_s=60,
-        ))
+        state = RoomState(
+            config=RoomConfig(
+                pass_buffer_chars=16,
+                lease_ttl_s=60,
+            )
+        )
         state.add_participant(ParticipantInfo(id=agent.id))
         coord = RoomCoordinator(bus, state)
         user_event = ev.chat(sender="user", body="hi")
         bus.post(user_event)
-        plan = plan_for_default(agent.id, reason="adapter-scenario",
-                                target_event_ids=[user_event.id])
+        plan = plan_for_default(
+            agent.id, reason="adapter-scenario", target_event_ids=[user_event.id]
+        )
         coord.open_user_turn(user_event, plan)
         lease = coord.acquire_lease(agent.id, user_event.id)
         committed = run_streaming_call(agent, "<prompt>", lease, bus, coord)
         end = next(
-            e for e in reversed(bus.snapshot())
-            if e.kind == "stream"
-            and e.body.get("stream_event") == "end"
+            e
+            for e in reversed(bus.snapshot())
+            if e.kind == "stream" and e.body.get("stream_event") == "end"
         )
         return end.body["status"], committed, bus
 

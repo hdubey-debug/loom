@@ -11,12 +11,18 @@ The :class:`Agent` Protocol is the public-facing actor shape every
 Loom room consumes. Adapters in :mod:`loom.adapters` produce values
 satisfying it from ordinary ``send`` / ``stream`` callables.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import (
-    Any, Iterator, NamedTuple, Optional, Protocol, runtime_checkable,
+    Any,
+    Iterator,
+    NamedTuple,
+    Optional,
+    Protocol,
+    runtime_checkable,
 )
 
 from loom.kernel.events import Event
@@ -42,8 +48,7 @@ class TriggerPriorityFn(Protocol):
     :attr:`loom.kernel.room.RoomConfig.trigger_priority`.
     """
 
-    def __call__(self, event: Event, my_id: str,
-                 user_turn: Any) -> Optional[int]: ...
+    def __call__(self, event: Event, my_id: str, user_turn: Any) -> Optional[int]: ...
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class PromptSection:
     ``name`` is rendered as a comment header so prompt diffs are easy
     to attribute; ``text`` is the body.
     """
+
     name: str
     text: str
 
@@ -68,6 +74,7 @@ class LeaseCheckResult(NamedTuple):
     ``lease_denied`` control event carrying ``deny_reason`` and the
     failing check's name.
     """
+
     passed: bool
     deny_reason: Optional[str] = None
 
@@ -92,11 +99,12 @@ class LeaseCheck(Protocol):
     context only. A check that raises is treated as a denial with
     deny_reason ``"check_raised:<class_name>"``.
     """
+
     name: str
 
-    def check(self, *, holder: str, trigger_event_id: int,
-              is_direct_mention: bool,
-              coordinator: Any) -> LeaseCheckResult: ...
+    def check(
+        self, *, holder: str, trigger_event_id: int, is_direct_mention: bool, coordinator: Any
+    ) -> LeaseCheckResult: ...
 
 
 @runtime_checkable
@@ -262,8 +270,7 @@ class ConversationPolicy(ABC):
             )
         return ""
 
-    def system_prompt(self, participant_id: str,
-                      state: RoomStateView) -> str:
+    def system_prompt(self, participant_id: str, state: RoomStateView) -> str:
         """Additional system instructions appended after the kernel charter.
 
         The kernel always renders the charter
@@ -277,8 +284,7 @@ class ConversationPolicy(ABC):
         """
         return ""
 
-    def role_prompt(self, participant_id: str,
-                    state: RoomStateView) -> str:
+    def role_prompt(self, participant_id: str, state: RoomStateView) -> str:
         """Extra instructions for actors holding distinguished roles.
 
         Examples: anchor synthesis framing, teacher / quizzer role
@@ -287,7 +293,10 @@ class ConversationPolicy(ABC):
         return ""
 
     def should_post_response(
-        self, *, body: str, state: RoomStateView,
+        self,
+        *,
+        body: str,
+        state: RoomStateView,
         participant_id: str,
     ) -> bool:
         """Veto the post-stream commit of a participant's response.
@@ -308,7 +317,10 @@ class ConversationPolicy(ABC):
         return True
 
     def prompt_sections(
-        self, *, state: RoomStateView, participant_id: str,
+        self,
+        *,
+        state: RoomStateView,
+        participant_id: str,
         trigger_event: Optional[Event],
     ) -> list[PromptSection]:
         """Additional system-preamble sections supplied by the policy.
@@ -333,8 +345,9 @@ class ConversationPolicy(ABC):
         del state, participant_id, trigger_event
         return []
 
-    def dead_letter_target(self, *, state: RoomStateView,
-                           removed_participant: str) -> Optional[str]:
+    def dead_letter_target(
+        self, *, state: RoomStateView, removed_participant: str
+    ) -> Optional[str]:
         """Pick the reroute target for a dead-lettered @mention.
 
         Called by :meth:`RoomCoordinator._dead_letter_pending_mentions`
@@ -356,8 +369,7 @@ class ConversationPolicy(ABC):
             info = state.participants.get(state.default_responder_id)
             if info is not None and info.active and info.capable:
                 return state.default_responder_id
-        candidates = [p for p in state.participants.values()
-                      if p.active and p.capable]
+        candidates = [p for p in state.participants.values() if p.active and p.capable]
         if not candidates:
             return None
         candidates.sort(key=lambda p: (p.cost_tier, p.id))

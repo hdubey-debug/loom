@@ -21,6 +21,7 @@ TypeError out of ``from_jsonl`` would make ``replay_into`` crash an
 actor thread on a tampered journal — exactly the T1 failure mode
 the audit flagged.
 """
+
 from __future__ import annotations
 
 import json
@@ -46,6 +47,7 @@ from tests.property.strategies import event_streams, participant_ids
 # Event.from_jsonl shape validation
 # ---------------------------------------------------------------------------
 
+
 @given(line=st.text(min_size=0, max_size=200))
 def test_from_jsonl_raises_only_event_shape_error_on_garbage(line: str):
     """Arbitrary text either parses to a valid Event or raises EventShapeError.
@@ -66,13 +68,16 @@ def test_from_jsonl_raises_only_event_shape_error_on_garbage(line: str):
     payload=st.dictionaries(
         keys=st.text(min_size=1, max_size=12),
         values=st.recursive(
-            st.one_of(st.none(), st.booleans(), st.integers(),
-                     st.floats(allow_nan=False, allow_infinity=False),
-                     st.text(max_size=20)),
+            st.one_of(
+                st.none(),
+                st.booleans(),
+                st.integers(),
+                st.floats(allow_nan=False, allow_infinity=False),
+                st.text(max_size=20),
+            ),
             lambda children: st.one_of(
                 st.lists(children, max_size=4),
-                st.dictionaries(st.text(min_size=1, max_size=8),
-                                children, max_size=4),
+                st.dictionaries(st.text(min_size=1, max_size=8), children, max_size=4),
             ),
             max_leaves=8,
         ),
@@ -107,27 +112,48 @@ def test_from_jsonl_raises_only_event_shape_error_on_bytes_decoded(line: bytes):
     assert isinstance(e, Event)
 
 
-@pytest.mark.parametrize("bad_kind", [
-    None, "", "unknown_kind", 7, [], {},
-])
+@pytest.mark.parametrize(
+    "bad_kind",
+    [
+        None,
+        "",
+        "unknown_kind",
+        7,
+        [],
+        {},
+    ],
+)
 def test_from_jsonl_rejects_unknown_kind(bad_kind):
     line = json.dumps({"kind": bad_kind, "sender": "u", "body": ""})
     with pytest.raises(EventShapeError):
         Event.from_jsonl(line)
 
 
-@pytest.mark.parametrize("body", [
-    None, 7, [], {}, True,
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        7,
+        [],
+        {},
+        True,
+    ],
+)
 def test_from_jsonl_rejects_non_string_chat_body(body):
     line = json.dumps({"kind": "chat", "sender": "u", "body": body})
     with pytest.raises(EventShapeError):
         Event.from_jsonl(line)
 
 
-@pytest.mark.parametrize("body", [
-    None, "string-instead-of-dict", 7, [],
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        "string-instead-of-dict",
+        7,
+        [],
+    ],
+)
 def test_from_jsonl_rejects_non_dict_control_body(body):
     line = json.dumps({"kind": "control", "sender": "system", "body": body})
     with pytest.raises(EventShapeError):
@@ -135,37 +161,47 @@ def test_from_jsonl_rejects_non_dict_control_body(body):
 
 
 def test_from_jsonl_rejects_control_without_control_type():
-    line = json.dumps(
-        {"kind": "control", "sender": "system", "body": {"foo": "bar"}})
+    line = json.dumps({"kind": "control", "sender": "system", "body": {"foo": "bar"}})
     with pytest.raises(EventShapeError):
         Event.from_jsonl(line)
 
 
 def test_from_jsonl_rejects_stream_with_wrong_lease_id_type():
-    line = json.dumps({
-        "kind": "stream", "sender": "p",
-        "body": {"stream_event": "start", "lease_id": "not-int"},
-    })
+    line = json.dumps(
+        {
+            "kind": "stream",
+            "sender": "p",
+            "body": {"stream_event": "start", "lease_id": "not-int"},
+        }
+    )
     with pytest.raises(EventShapeError):
         Event.from_jsonl(line)
 
 
 def test_from_jsonl_rejects_bool_in_int_field():
     """Bool is an int subclass in Python; tampered JSON ``true`` must not slip through."""
-    line = json.dumps({
-        "kind": "chat", "sender": "u", "body": "hi",
-        "room_epoch": True,
-    })
+    line = json.dumps(
+        {
+            "kind": "chat",
+            "sender": "u",
+            "body": "hi",
+            "room_epoch": True,
+        }
+    )
     with pytest.raises(EventShapeError):
         Event.from_jsonl(line)
 
 
 def test_from_jsonl_extra_unknown_keys_rejected():
     """Future schema fields don't leak through with ``cls(**d)``."""
-    line = json.dumps({
-        "kind": "chat", "sender": "u", "body": "hi",
-        "future_field": "leakable_secret",
-    })
+    line = json.dumps(
+        {
+            "kind": "chat",
+            "sender": "u",
+            "body": "hi",
+            "future_field": "leakable_secret",
+        }
+    )
     # Should raise — extra fields fail validation in the strict mode,
     # OR get filtered. Either way, no TypeError from the dataclass.
     try:
@@ -181,16 +217,25 @@ def test_from_jsonl_extra_unknown_keys_rejected():
 # restore_state defensive guards
 # ---------------------------------------------------------------------------
 
-@given(state_data=st.one_of(
-    st.none(),
-    st.text(max_size=10),
-    st.lists(st.integers(), max_size=3),
-    st.dictionaries(st.text(min_size=1, max_size=8),
-                    st.one_of(st.none(), st.text(max_size=10),
-                              st.integers(), st.booleans(),
-                              st.lists(st.text(max_size=5), max_size=3)),
-                    max_size=6),
-))
+
+@given(
+    state_data=st.one_of(
+        st.none(),
+        st.text(max_size=10),
+        st.lists(st.integers(), max_size=3),
+        st.dictionaries(
+            st.text(min_size=1, max_size=8),
+            st.one_of(
+                st.none(),
+                st.text(max_size=10),
+                st.integers(),
+                st.booleans(),
+                st.lists(st.text(max_size=5), max_size=3),
+            ),
+            max_size=6,
+        ),
+    )
+)
 def test_restore_state_never_raises_on_arbitrary_input(state_data):
     """Arbitrary state data must not crash restore_state."""
     cfg = RoomConfig()
@@ -199,19 +244,21 @@ def test_restore_state_never_raises_on_arbitrary_input(state_data):
     assert state.config is cfg
 
 
-@given(participants=st.lists(
-    st.one_of(
-        st.none(),
-        st.text(max_size=8),
-        st.integers(),
-        st.dictionaries(
-            st.text(min_size=1, max_size=8),
-            st.one_of(st.none(), st.integers(), st.text(max_size=8),
-                      st.booleans()),
-            max_size=5),
-    ),
-    max_size=8,
-))
+@given(
+    participants=st.lists(
+        st.one_of(
+            st.none(),
+            st.text(max_size=8),
+            st.integers(),
+            st.dictionaries(
+                st.text(min_size=1, max_size=8),
+                st.one_of(st.none(), st.integers(), st.text(max_size=8), st.booleans()),
+                max_size=5,
+            ),
+        ),
+        max_size=8,
+    )
+)
 def test_restore_state_skips_malformed_participant_entries(participants):
     """Malformed participant entries are skipped rather than propagated."""
     cfg = RoomConfig()
@@ -224,8 +271,7 @@ def test_restore_state_skips_malformed_participant_entries(participants):
 
 def test_restore_state_rejects_non_string_id():
     cfg = RoomConfig()
-    state = restore_state(
-        {"version": 3, "participants": [{"id": 7, "capable": True}]}, cfg)
+    state = restore_state({"version": 3, "participants": [{"id": 7, "capable": True}]}, cfg)
     assert state.participants == {}
 
 
@@ -239,6 +285,7 @@ def test_restore_state_clamps_bool_room_epoch():
 # ---------------------------------------------------------------------------
 # parse_addressees
 # ---------------------------------------------------------------------------
+
 
 @given(
     text=st.text(min_size=0, max_size=200),
@@ -259,12 +306,14 @@ def test_parse_addressees_returns_subset(text, addressable, exclude):
 # Journal.iter_events on tampered files
 # ---------------------------------------------------------------------------
 
+
 @given(
     valid_events=event_streams(min_size=0, max_size=8),
     garbage_lines=st.lists(st.text(min_size=0, max_size=200), max_size=8),
 )
 def test_iter_events_with_corruption_surfaces_corruption_events(
-        tmp_path_factory, valid_events, garbage_lines):
+    tmp_path_factory, valid_events, garbage_lines
+):
     """Tampered lines surface as ``journal_corruption`` events when opted in."""
     tmp = tmp_path_factory.mktemp("journal_fuzz")
     j = Journal(tmp)
@@ -283,12 +332,10 @@ def test_iter_events_with_corruption_surfaces_corruption_events(
     silent = list(j.iter_events())
     for e in silent:
         assert isinstance(e, Event)
-        assert ev.control_type_of(e) not in (
-            "journal_corruption", "journal_truncated")
+        assert ev.control_type_of(e) not in ("journal_corruption", "journal_truncated")
 
     # With opt-in: corruption events appear for unparseable lines.
-    with_corruption = list(
-        j.iter_events(emit_corruption_events=True))
+    with_corruption = list(j.iter_events(emit_corruption_events=True))
     for e in with_corruption:
         assert isinstance(e, Event)
 
@@ -306,16 +353,14 @@ def test_iter_events_distinguishes_truncated_last_line(tmp_path_factory):
     assert "journal_corruption" not in types
 
 
-def test_iter_events_midstream_corruption_is_corruption_not_truncated(
-        tmp_path_factory):
+def test_iter_events_midstream_corruption_is_corruption_not_truncated(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("journal_midstream")
     j = Journal(tmp)
     a = ev.chat(sender="u", body="a")
     a.id, a.ts = 0, 1.0
     b = ev.chat(sender="u", body="b")
     b.id, b.ts = 1, 2.0
-    j.events_path.write_text(
-        a.to_jsonl() + "\n{tampered}\n" + b.to_jsonl() + "\n")
+    j.events_path.write_text(a.to_jsonl() + "\n{tampered}\n" + b.to_jsonl() + "\n")
     yielded = list(j.iter_events(emit_corruption_events=True))
     types = [ev.control_type_of(e) for e in yielded]
     assert "journal_corruption" in types
@@ -326,16 +371,19 @@ def test_iter_events_midstream_corruption_is_corruption_not_truncated(
 # redact_error_text
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("secret", [
-    "sk-1234567890ABCDEFGHIJKL",
-    "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA",
-    "Bearer abcdefghijklmnopq1234567",
-    "AKIAIOSFODNN7EXAMPLE",
-    "AIzaSyD-aBCDEFGHIJKLMNOPQrstuvwxyz0123456",
-    "ya29.A0ARrdaM-aBcDeFgHiJkLmNoPqRsTuV",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk",
-])
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "sk-1234567890ABCDEFGHIJKL",
+        "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA",
+        "Bearer abcdefghijklmnopq1234567",
+        "AKIAIOSFODNN7EXAMPLE",
+        "AIzaSyD-aBCDEFGHIJKLMNOPQrstuvwxyz0123456",
+        "ya29.A0ARrdaM-aBcDeFgHiJkLmNoPqRsTuV",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk",
+    ],
+)
 def test_redact_error_text_strips_known_secrets(secret: str):
     s = f"Provider error context: {secret} (request id ...)"
     out = redact_error_text(s)
@@ -391,13 +439,13 @@ def test_buggy_scrubber_does_not_break_redaction():
 # SecretShape detector framework (v0.2)
 # ---------------------------------------------------------------------------
 
+
 def test_register_secret_shape_detects_custom_pattern():
     """A custom SecretShape detector contributes to redaction."""
     import re as _re
     from loom.kernel.events import _RegexShape
 
-    custom = _RegexShape(
-        "internal_token", _re.compile(r"INT-[A-Z0-9]{12}"))
+    custom = _RegexShape("internal_token", _re.compile(r"INT-[A-Z0-9]{12}"))
     ev.register_secret_shape(custom)
     try:
         out = redact_error_text("err: leaked INT-ABCDEF123456 oops")
@@ -410,16 +458,24 @@ def test_register_secret_shape_detects_custom_pattern():
 def test_default_shapes_each_have_a_unique_name():
     """Default shapes are named for audit/observability."""
     from loom.kernel.events import _DEFAULT_SHAPES
+
     names = [s.name for s in _DEFAULT_SHAPES]
     assert len(names) == len(set(names)), names
     # Sanity: covers the seven canonical secret families.
-    assert {"openai_sk", "anthropic_sk_ant", "bearer_token",
-            "aws_access_key", "jwt", "gcp_api_key", "gcp_oauth"} \
-        .issubset(set(names))
+    assert {
+        "openai_sk",
+        "anthropic_sk_ant",
+        "bearer_token",
+        "aws_access_key",
+        "jwt",
+        "gcp_api_key",
+        "gcp_oauth",
+    }.issubset(set(names))
 
 
 def test_secret_shape_protocol_allows_non_regex_detectors():
     """Custom non-regex detectors satisfy the SecretShape protocol."""
+
     class _PalindromeShape:
         # A toy structural detector: any 10-char prefix-marked palindrome.
         name = "palindrome10"
@@ -427,7 +483,7 @@ def test_secret_shape_protocol_allows_non_regex_detectors():
         def detect(self, text: str):
             i = 0
             while i + 10 <= len(text):
-                window = text[i:i + 10]
+                window = text[i : i + 10]
                 if window.startswith("@@") and window == window[::-1]:
                     yield (i, i + 10)
                 i += 1
@@ -459,13 +515,10 @@ def test_buggy_shape_detector_does_not_break_redaction():
 
 def test_overlapping_shape_spans_render_single_placeholder():
     """When two detectors match overlapping regions, only one placeholder appears."""
-    import re as _re
-    from loom.kernel.events import _RegexShape
 
     # ``sk-ant-...`` is matched by BOTH the explicit anthropic shape
     # AND the legacy ``sk-...`` shape in the defaults.
-    out = redact_error_text(
-        "err: sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA happened")
+    out = redact_error_text("err: sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA happened")
     assert out.count("[redacted-secret]") == 1
 
 

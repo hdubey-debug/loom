@@ -9,6 +9,7 @@ Today's hot paths:
 - Lease cap counter: ``sum(1 for l in self._leases.values() if ...)``
   — Phase 3.2 replaces with a counter when measurements warrant it.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -33,13 +34,19 @@ def _make_user_turn(n_obligations: int) -> UserTurn:
     obs: dict[int, ResponseObligation] = {}
     for i in range(n_obligations):
         ob = ResponseObligation(
-            id=i + 1, participant_id=f"p{i}", level="must",
-            target_event_ids=[0], reason="bench",
+            id=i + 1,
+            participant_id=f"p{i}",
+            level="must",
+            target_event_ids=[0],
+            reason="bench",
         )
         obs[ob.id] = ob
     return UserTurn(
-        id=1, user_event_id=0, started_at=0.0,
-        frozen_plan=plan, obligations=obs,
+        id=1,
+        user_event_id=0,
+        started_at=0.0,
+        frozen_plan=plan,
+        obligations=obs,
     )
 
 
@@ -48,18 +55,24 @@ def test_obligation_for_hit(bench, n):
     """Lookup that finds an obligation in the middle of the list."""
     ut = _make_user_turn(n)
     target = f"p{n // 2}"
-    bench(lambda: ut.obligation_for(target),
-          name=f"UserTurn.obligation_for hit N={n}",
-          iters=500, inner=200)
+    bench(
+        lambda: ut.obligation_for(target),
+        name=f"UserTurn.obligation_for hit N={n}",
+        iters=500,
+        inner=200,
+    )
 
 
 @pytest.mark.parametrize("n", [5, 25, 100])
 def test_obligation_for_miss(bench, n):
     """Lookup that finds nothing — worst case for linear scan."""
     ut = _make_user_turn(n)
-    bench(lambda: ut.obligation_for("not-a-participant"),
-          name=f"UserTurn.obligation_for miss N={n}",
-          iters=500, inner=200)
+    bench(
+        lambda: ut.obligation_for("not-a-participant"),
+        name=f"UserTurn.obligation_for miss N={n}",
+        iters=500,
+        inner=200,
+    )
 
 
 @pytest.mark.parametrize("size", [1_000, 10_000])
@@ -77,21 +90,18 @@ def test_find_recent_chat_event_id(bench, size):
                 return e.id
         return None
 
-    bench(find, name=f"_find_recent_chat_event_id-style E={size}",
-          iters=200, inner=5)
+    bench(find, name=f"_find_recent_chat_event_id-style E={size}", iters=200, inner=5)
 
 
 @pytest.mark.parametrize("n", [5, 25, 100])
 def test_lease_cap_counter(bench, n):
     """Reproduces the per-grant ``sum(1 for l in self._leases.values() ...)``."""
-    leases = {
-        i: dict(holder=f"p{i % 5}", user_turn_id=1, valid=True)
-        for i in range(n)
-    }
+    leases = {i: dict(holder=f"p{i % 5}", user_turn_id=1, valid=True) for i in range(n)}
     bench(
         lambda: sum(
-            1 for lease in leases.values()
-            if lease["user_turn_id"] == 1 and lease["valid"]
+            1 for lease in leases.values() if lease["user_turn_id"] == 1 and lease["valid"]
         ),
-        name=f"lease cap-counter sum N={n}", iters=500, inner=200,
+        name=f"lease cap-counter sum N={n}",
+        iters=500,
+        inner=200,
     )

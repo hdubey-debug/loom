@@ -9,6 +9,7 @@ something has drifted from the design philosophy in
 Each test is intentionally narrow: one drift class per test, with a
 short inline rationale.
 """
+
 from __future__ import annotations
 
 import re
@@ -32,6 +33,7 @@ def _iter_python_files(root: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 # Naming canonicalization (audit F4.1 / §5.2)
 # ---------------------------------------------------------------------------
+
 
 def test_actor_id_appears_only_in_kernel_actor_module():
     """``actor_id`` is reserved for the per-thread runtime in
@@ -70,12 +72,12 @@ def test_actor_id_appears_only_in_kernel_actor_module():
             # Skip lines that contain ``actor_id`` only inside a
             # backtick-quoted reference (prose) — these are common in
             # comments left to flag a name change.
-            if re.search(r"\bactor_id\b", line) \
-                    and not re.search(r"`+actor_id`+", line):
+            if re.search(r"\bactor_id\b", line) and not re.search(r"`+actor_id`+", line):
                 offenders.append(f"{rel}:{line_no}: {stripped}")
     assert not offenders, (
         "``actor_id`` leaked into a user-facing surface — rename to "
-        "``participant_id``:\n  " + "\n  ".join(offenders))
+        "``participant_id``:\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_active_goal_field_removed_from_state():
@@ -83,6 +85,7 @@ def test_active_goal_field_removed_from_state():
     the field must not reappear under any name on either struct.
     """
     from loom.kernel.room import RoomControlState, RoomState
+
     assert not hasattr(RoomControlState(), "active_goal")
     # ``RoomState.topic`` is the canonical merged location.
     state_fields = {f.name for f in RoomState.__dataclass_fields__.values()}
@@ -93,6 +96,7 @@ def test_active_goal_field_removed_from_state():
 # ---------------------------------------------------------------------------
 # Public/private boundary (audit Phase 0.3)
 # ---------------------------------------------------------------------------
+
 
 def test_no_loom_kernel_imports_in_public_examples():
     """Bundled examples import only from ``loom.*`` / ``loom.policy.*`` /
@@ -112,14 +116,15 @@ def test_no_loom_kernel_imports_in_public_examples():
         text = path.read_text(encoding="utf-8")
         if pattern.search(text):
             offenders.append(str(path.relative_to(_REPO_ROOT)))
-    assert not offenders, (
-        "examples/ MUST NOT import from loom.kernel.*:\n  "
-        + "\n  ".join(offenders))
+    assert not offenders, "examples/ MUST NOT import from loom.kernel.*:\n  " + "\n  ".join(
+        offenders
+    )
 
 
 # ---------------------------------------------------------------------------
 # Time-handling (audit F4.5 / P2.5)
 # ---------------------------------------------------------------------------
+
 
 def test_no_new_time_time_in_kernel_duration_math():
     """Duration math sites use ``time.monotonic()``.
@@ -128,8 +133,8 @@ def test_no_new_time_time_in_kernel_duration_math():
     documented as a wall-clock for replay / journal display.
     """
     allowed_files = {
-        "kernel/bus.py",          # Event.ts wall-clock — replay only.
-        "kernel/events.py",       # documents Event.ts wall-clock.
+        "kernel/bus.py",  # Event.ts wall-clock — replay only.
+        "kernel/events.py",  # documents Event.ts wall-clock.
     }
     pattern = re.compile(r"\btime\.time\s*\(\s*\)")
     offenders: list[str] = []
@@ -143,13 +148,14 @@ def test_no_new_time_time_in_kernel_duration_math():
                 offenders.append(f"{rel}:{line_no}: {line.strip()}")
     assert not offenders, (
         "kernel duration-math sites must use time.monotonic(); "
-        "time.time() is wall-clock and unsafe under clock steps:\n  "
-        + "\n  ".join(offenders))
+        "time.time() is wall-clock and unsafe under clock steps:\n  " + "\n  ".join(offenders)
+    )
 
 
 # ---------------------------------------------------------------------------
 # Optional[X] vs X | None consistency (audit F4.8)
 # ---------------------------------------------------------------------------
+
 
 def test_optional_typehint_consistency():
     """The codebase uses ``Optional[X]`` exclusively (audit F4.8).
@@ -170,13 +176,14 @@ def test_optional_typehint_consistency():
             if pattern_or_none.search(line):
                 offenders.append(f"{rel}:{line_no}: {stripped}")
     assert not offenders, (
-        "Codebase convention is Optional[X]; do not mix with X | None:\n  "
-        + "\n  ".join(offenders))
+        "Codebase convention is Optional[X]; do not mix with X | None:\n  " + "\n  ".join(offenders)
+    )
 
 
 # ---------------------------------------------------------------------------
 # Public API discoverability (audit §3.6)
 # ---------------------------------------------------------------------------
+
 
 def test_loomroom_public_methods_have_docstrings():
     """Every public method on ``LoomRoom`` must have a docstring.
@@ -185,6 +192,7 @@ def test_loomroom_public_methods_have_docstrings():
     answer ~80% of "what can I do?" without grepping the kernel.
     """
     from loom.room import LoomRoom
+
     missing: list[str] = []
     for name in dir(LoomRoom):
         if name.startswith("_"):
@@ -194,14 +202,15 @@ def test_loomroom_public_methods_have_docstrings():
             continue
         if getattr(attr, "__doc__", None) in (None, ""):
             missing.append(name)
-    assert not missing, (
-        "LoomRoom public methods missing docstrings (audit §3.6): "
-        + ", ".join(missing))
+    assert not missing, "LoomRoom public methods missing docstrings (audit §3.6): " + ", ".join(
+        missing
+    )
 
 
 # ---------------------------------------------------------------------------
 # Agent Protocol structural conformance (audit F3.2)
 # ---------------------------------------------------------------------------
+
 
 def test_bundled_adapter_factories_produce_runtime_checkable_agents():
     """``isinstance(a, Agent)`` passes for every bundled adapter factory.
@@ -229,13 +238,13 @@ def test_bundled_adapter_factories_produce_runtime_checkable_agents():
     a3 = agent_from_object("c", _Obj())
 
     for a in (a1, a2, a3):
-        assert isinstance(a, Agent), (
-            f"adapter {a!r} does not satisfy the Agent Protocol")
+        assert isinstance(a, Agent), f"adapter {a!r} does not satisfy the Agent Protocol"
 
 
 # ---------------------------------------------------------------------------
 # Routing-case taxonomy (audit P2.6)
 # ---------------------------------------------------------------------------
+
 
 def test_bundled_policies_emit_validated_routing_cases():
     """``UserTurnPlan.routing_case`` rejects unknown values at construction.

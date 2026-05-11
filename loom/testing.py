@@ -25,6 +25,7 @@ journal, coordinator, or full session lifecycle should construct
 those objects directly — the kernel internals are still imported by
 test code in those cases.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,7 +33,12 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
-    Any, Iterator, Mapping, Optional, Sequence, Union,
+    Any,
+    Iterator,
+    Mapping,
+    Optional,
+    Sequence,
+    Union,
 )
 
 from loom.kernel import events as _ev
@@ -50,10 +56,10 @@ from loom.kernel.room import (
 # ---------------------------------------------------------------------------
 
 ParticipantSpec = Union[
-    str,                           # "pid"  -> active=True, capable=True
-    ParticipantInfo,               # passthrough
-    Mapping[str, Any],             # {"id": "pid", "active": False, ...}
-    Sequence,                      # ("pid", active, capable[, cost_tier])
+    str,  # "pid"  -> active=True, capable=True
+    ParticipantInfo,  # passthrough
+    Mapping[str, Any],  # {"id": "pid", "active": False, ...}
+    Sequence,  # ("pid", active, capable[, cost_tier])
 ]
 
 
@@ -140,6 +146,7 @@ def make_test_event(
 # Streaming proxies
 # ---------------------------------------------------------------------------
 
+
 class FakeProxy:
     """Minimal :class:`~loom.kernel.streaming.StreamingProxy` for tests.
 
@@ -180,8 +187,7 @@ class FakeProxy:
             if self.cancelled:
                 return
             if self.raises_at is not None and i == self.raises_at:
-                raise self.raises or RuntimeError(
-                    f"FakeProxy: raise at chunk {i}")
+                raise self.raises or RuntimeError(f"FakeProxy: raise at chunk {i}")
             yield chunk
 
     def cancel(self) -> None:
@@ -191,6 +197,7 @@ class FakeProxy:
 # ---------------------------------------------------------------------------
 # State-mutation guard
 # ---------------------------------------------------------------------------
+
 
 def _snapshot_view(view: RoomStateView) -> dict[str, Any]:
     """Capture mutation-relevant fields of a :class:`RoomStateView`.
@@ -235,18 +242,16 @@ def assert_no_state_mutation(view: RoomStateView) -> Iterator[None]:
     yield
     after = _snapshot_view(view)
     if before != after:
-        diff = [
-            f"{k}: {before[k]!r} -> {after[k]!r}"
-            for k in before if before[k] != after[k]
-        ]
+        diff = [f"{k}: {before[k]!r} -> {after[k]!r}" for k in before if before[k] != after[k]]
         raise AssertionError(
-            "RoomStateView mutated under assert_no_state_mutation:\n  "
-            + "\n  ".join(diff))
+            "RoomStateView mutated under assert_no_state_mutation:\n  " + "\n  ".join(diff)
+        )
 
 
 # ---------------------------------------------------------------------------
 # Record / replay proxy
 # ---------------------------------------------------------------------------
+
 
 class RecordReplayProxy:
     """Adapter test harness — record real provider chunks once, replay forever.
@@ -288,9 +293,7 @@ class RecordReplayProxy:
         mode: str = "auto",
     ) -> None:
         if mode not in ("auto", "record", "replay"):
-            raise ValueError(
-                f"RecordReplayProxy: mode must be auto|record|replay, "
-                f"got {mode!r}")
+            raise ValueError(f"RecordReplayProxy: mode must be auto|record|replay, got {mode!r}")
         self.path = Path(path)
         self.inner = inner
         if mode == "auto":
@@ -300,13 +303,12 @@ class RecordReplayProxy:
         if mode == "replay":
             if not self.path.exists():
                 raise FileNotFoundError(
-                    f"RecordReplayProxy: replay mode but no recording "
-                    f"at {self.path}")
+                    f"RecordReplayProxy: replay mode but no recording at {self.path}"
+                )
             self._cache = self._load(self.path)
         elif mode == "record":
             if inner is None:
-                raise ValueError(
-                    "RecordReplayProxy: record mode requires an inner proxy")
+                raise ValueError("RecordReplayProxy: record mode requires an inner proxy")
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -323,10 +325,12 @@ class RecordReplayProxy:
 
     def _append(self, prompt: str, chunks: list[str]) -> None:
         with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(
-                {"prompt": prompt, "chunks": chunks},
-                ensure_ascii=False,
-            ))
+            fh.write(
+                json.dumps(
+                    {"prompt": prompt, "chunks": chunks},
+                    ensure_ascii=False,
+                )
+            )
             fh.write("\n")
 
     def stream(self, prompt: str) -> Iterator[str]:
@@ -335,7 +339,8 @@ class RecordReplayProxy:
             if chunks is None:
                 raise KeyError(
                     f"RecordReplayProxy: no recorded reply for prompt "
-                    f"(len={len(prompt)}). Re-record or check key drift.")
+                    f"(len={len(prompt)}). Re-record or check key drift."
+                )
             for c in chunks:
                 yield c
             return

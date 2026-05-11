@@ -17,6 +17,7 @@ These two helpers are kernel concerns, not policy decisions:
 The shared regex :data:`_MENTION_RE` is module-level so callers can
 monkeypatch it in tests.
 """
+
 from __future__ import annotations
 
 import re
@@ -28,8 +29,9 @@ from loom.kernel.bus import MessageBus
 _MENTION_RE = re.compile(r"@([A-Za-z][\w-]*)")
 
 
-def parse_addressees(text: str, addressable: list[str], *,
-                     exclude: Optional[str] = None) -> list[str]:
+def parse_addressees(
+    text: str, addressable: list[str], *, exclude: Optional[str] = None
+) -> list[str]:
     """Pull ``@id`` tokens from ``text`` filtered to ``addressable``.
 
     Order-preserving. Each id appears at most once. Self-mentions

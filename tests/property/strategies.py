@@ -3,6 +3,7 @@
 Centralizing generators here keeps each property test focused on the
 invariant. Adding a new event kind means updating this file once.
 """
+
 from __future__ import annotations
 
 import string
@@ -18,9 +19,9 @@ from loom.kernel.events import Event
 # ---------------------------------------------------------------------------
 
 participant_alphabet = string.ascii_lowercase + string.digits + "_"
-participant_ids = st.text(
-    alphabet=participant_alphabet, min_size=1, max_size=12
-).filter(lambda s: s and not s.isdigit())
+participant_ids = st.text(alphabet=participant_alphabet, min_size=1, max_size=12).filter(
+    lambda s: s and not s.isdigit()
+)
 
 # Channels are "main" or "dm:<participant>".
 channels = st.one_of(
@@ -36,6 +37,7 @@ short_text = st.text(min_size=0, max_size=20)
 # Event factories
 # ---------------------------------------------------------------------------
 
+
 @st.composite
 def chat_events(draw):
     """A chat Event (id/ts left at zero — caller assigns)."""
@@ -44,8 +46,10 @@ def chat_events(draw):
     addressees = draw(st.lists(participant_ids, max_size=4))
     channel = draw(channels)
     return ev.chat(
-        sender=sender, body=body,
-        addressees=addressees, channel=channel,
+        sender=sender,
+        body=body,
+        addressees=addressees,
+        channel=channel,
         room_epoch=draw(st.integers(min_value=0, max_value=100)),
     )
 
@@ -53,17 +57,28 @@ def chat_events(draw):
 @st.composite
 def control_events(draw):
     """Pick one of several known control_types and build it via the factory."""
-    kind = draw(st.sampled_from(["topic_changed", "participant_added",
-                                  "participant_removed", "user_turn_opened",
-                                  "user_turn_closed", "obligation_recorded",
-                                  "obligation_resolved", "dead_letter",
-                                  "default_responder_changed",
-                                  "roles_assigned", "floor_updated",
-                                  "style_changed", "journal_error",
-                                  "actor_error"]))
+    kind = draw(
+        st.sampled_from(
+            [
+                "topic_changed",
+                "participant_added",
+                "participant_removed",
+                "user_turn_opened",
+                "user_turn_closed",
+                "obligation_recorded",
+                "obligation_resolved",
+                "dead_letter",
+                "default_responder_changed",
+                "roles_assigned",
+                "floor_updated",
+                "style_changed",
+                "journal_error",
+                "actor_error",
+            ]
+        )
+    )
     if kind == "topic_changed":
-        return ev.topic_changed(draw(st.one_of(st.none(), short_text)),
-                                 draw(short_text))
+        return ev.topic_changed(draw(st.one_of(st.none(), short_text)), draw(short_text))
     if kind == "participant_added":
         return ev.participant_added(draw(participant_ids))
     if kind == "participant_removed":
@@ -71,38 +86,45 @@ def control_events(draw):
     if kind == "user_turn_opened":
         return ev.user_turn_opened(
             user_turn_id=draw(st.integers(min_value=0, max_value=100)),
-            routing_case=draw(st.sampled_from(
-                ["direct_mention", "multi_opinion", "question",
-                 "challenge", "followup", "none"])),
-            required_participants=draw(
-                st.lists(participant_ids, max_size=3)),
-            optional_participants=draw(
-                st.lists(participant_ids, max_size=3)),
+            routing_case=draw(
+                st.sampled_from(
+                    ["direct_mention", "multi_opinion", "question", "challenge", "followup", "none"]
+                )
+            ),
+            required_participants=draw(st.lists(participant_ids, max_size=3)),
+            optional_participants=draw(st.lists(participant_ids, max_size=3)),
             rationale=draw(short_text),
         )
     if kind == "user_turn_closed":
         return ev.user_turn_closed(
             user_turn_id=draw(st.integers(min_value=0, max_value=100)),
-            reason=draw(st.sampled_from(
-                ["completed", "idle_timeout", "new_user_post",
-                 "cancelled", "topic_changed", "no_responder",
-                 "obligation_unresolved"])),
+            reason=draw(
+                st.sampled_from(
+                    [
+                        "completed",
+                        "idle_timeout",
+                        "new_user_post",
+                        "cancelled",
+                        "topic_changed",
+                        "no_responder",
+                        "obligation_unresolved",
+                    ]
+                )
+            ),
         )
     if kind == "obligation_recorded":
         return ev.obligation_recorded(
             obligation_id=draw(st.integers(min_value=0, max_value=100)),
             participant_id=draw(participant_ids),
             level=draw(st.sampled_from(["may", "should", "must"])),
-            target_event_ids=draw(
-                st.lists(st.integers(min_value=0, max_value=50), max_size=3)),
+            target_event_ids=draw(st.lists(st.integers(min_value=0, max_value=50), max_size=3)),
             reason=draw(short_text),
         )
     if kind == "obligation_resolved":
         return ev.obligation_resolved(
             obligation_id=draw(st.integers(min_value=0, max_value=100)),
             participant_id=draw(participant_ids),
-            resolved_by_event_id=draw(
-                st.one_of(st.none(), st.integers(min_value=0, max_value=50))),
+            resolved_by_event_id=draw(st.one_of(st.none(), st.integers(min_value=0, max_value=50))),
         )
     if kind == "dead_letter":
         return ev.dead_letter(
@@ -150,18 +172,24 @@ def stream_events(draw):
     pid = draw(participant_ids)
     if kind == "start":
         return ev.stream_start(
-            lease_id=lease_id, participant_id=pid,
+            lease_id=lease_id,
+            participant_id=pid,
             trigger_event_id=draw(st.integers(min_value=0, max_value=50)),
         )
     if kind == "delta":
         return ev.stream_delta(
-            lease_id=lease_id, participant_id=pid,
+            lease_id=lease_id,
+            participant_id=pid,
             text=draw(bodies_chat),
         )
     return ev.stream_end(
-        lease_id=lease_id, participant_id=pid,
-        status=draw(st.sampled_from(["committed", "passed", "suppressed",
-                                       "cancelled", "error", "lease_expired"])),
+        lease_id=lease_id,
+        participant_id=pid,
+        status=draw(
+            st.sampled_from(
+                ["committed", "passed", "suppressed", "cancelled", "error", "lease_expired"]
+            )
+        ),
     )
 
 
@@ -186,11 +214,16 @@ def event_streams(draw, min_size=1, max_size=50):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def equal_ignoring_id_ts(a: Event, b: Event) -> bool:
     """Compare two events ignoring the id/ts fields the bus assigns."""
-    return (a.kind == b.kind and a.sender == b.sender
-            and a.body == b.body and a.channel == b.channel
-            and a.addressees == b.addressees
-            and a.room_epoch == b.room_epoch
-            and a.user_turn_id == b.user_turn_id
-            and a.meta == b.meta)
+    return (
+        a.kind == b.kind
+        and a.sender == b.sender
+        and a.body == b.body
+        and a.channel == b.channel
+        and a.addressees == b.addressees
+        and a.room_epoch == b.room_epoch
+        and a.user_turn_id == b.user_turn_id
+        and a.meta == b.meta
+    )

@@ -4,6 +4,7 @@ These scenarios use only fake in-process agents/proxies. They exercise
 runtime wiring, policies, actor decisions, streaming commits, turn
 closure, room control, and journaling together without any network calls.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,8 +56,7 @@ def _wiring(pid: str, *responses: str, cost_tier: int = 1):
     )
 
 
-def _drive_until_closed(case: unittest.TestCase, session, *,
-                        rounds: int = 10):
+def _drive_until_closed(case: unittest.TestCase, session, *, rounds: int = 10):
     turn = session.coordinator.user_turn
     case.assertIsNotNone(turn)
     target_turn_id = turn.id
@@ -64,17 +64,13 @@ def _drive_until_closed(case: unittest.TestCase, session, *,
         for actor in list(session.actors):
             actor.step()
         turn = session.coordinator.user_turn
-        if turn is not None and turn.id == target_turn_id \
-                and turn.state == "closed":
+        if turn is not None and turn.id == target_turn_id and turn.state == "closed":
             return turn
     case.fail(f"user turn {target_turn_id} did not close")
 
 
 def _agent_chats(session, *, turn_id: int | None = None):
-    chats = [
-        e for e in session.bus.snapshot()
-        if e.kind == "chat" and e.sender != "user"
-    ]
+    chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender != "user"]
     if turn_id is not None:
         chats = [e for e in chats if e.user_turn_id == turn_id]
     return chats
@@ -84,8 +80,7 @@ class OpenChatIntegration(unittest.TestCase):
     def test_ten_fake_agents_each_reply_once_and_turn_completes(self):
         ids = [f"a{i}" for i in range(10)]
         session = build_loom_session(
-            [_wiring(pid, _long_reply(pid), cost_tier=i)
-             for i, pid in enumerate(ids)],
+            [_wiring(pid, _long_reply(pid), cost_tier=i) for i, pid in enumerate(ids)],
             policy=OpenChatPolicy(),
             auto_start=False,
         )
@@ -138,7 +133,8 @@ class DefaultPolicyIntegration(unittest.TestCase):
 
             closed = _drive_until_closed(self, session)
             starts = [
-                e for e in session.bus.snapshot()
+                e
+                for e in session.bus.snapshot()
                 if e.kind == "stream" and e.body.get("stream_event") == "start"
             ]
             self.assertEqual(closed.closure_reason, "completed")
@@ -151,8 +147,7 @@ class IdleTimeoutIntegration(unittest.TestCase):
     def test_required_non_reply_closes_on_idle_window_not_lease_ttl(self):
         session = build_loom_session(
             [_wiring("alpha")],
-            config=RoomConfig(user_turn_idle_timeout_s=0.1,
-                              lease_ttl_s=60.0),
+            config=RoomConfig(user_turn_idle_timeout_s=0.1, lease_ttl_s=60.0),
             policy=SingleResponderPolicy("alpha"),
             auto_start=False,
         )
@@ -160,8 +155,7 @@ class IdleTimeoutIntegration(unittest.TestCase):
             post_user_text(session, "please respond")
             turn = session.coordinator.user_turn
             self.assertEqual(turn.state, "open")
-            session.coordinator.check_idle_timeout(
-                now=turn.last_activity_at + 0.101)
+            session.coordinator.check_idle_timeout(now=turn.last_activity_at + 0.101)
             self.assertEqual(turn.state, "closed")
             self.assertEqual(turn.closure_reason, "obligation_unresolved")
         finally:
@@ -186,9 +180,7 @@ class RoundRobinIntegration(unittest.TestCase):
             self.assertEqual(observed, ["alpha", "bravo", "charlie"])
             self.assertEqual(session.state.control.next_speaker_idx, 0)
             # Round-robin mode is signalled by a non-empty turn_order.
-            self.assertEqual(
-                session.state.control.turn_order,
-                ["alpha", "bravo", "charlie"])
+            self.assertEqual(session.state.control.turn_order, ["alpha", "bravo", "charlie"])
         finally:
             session.stop()
 
@@ -231,13 +223,10 @@ class JournaledSessionIntegration(unittest.TestCase):
             self.assertTrue(events_path.exists())
             self.assertTrue(snapshot_path.exists())
 
-            lines = [line for line in events_path.read_text().splitlines()
-                     if line.strip()]
+            lines = [line for line in events_path.read_text().splitlines() if line.strip()]
             self.assertGreater(len(lines), 0)
             decoded = [json.loads(line) for line in lines]
-            self.assertTrue(any(e["kind"] == "chat"
-                                and e["sender"] == "alpha"
-                                for e in decoded))
+            self.assertTrue(any(e["kind"] == "chat" and e["sender"] == "alpha" for e in decoded))
 
             snapshot = json.loads(snapshot_path.read_text())
             self.assertEqual(snapshot["current_user_turn_id"], None)

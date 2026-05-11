@@ -5,6 +5,7 @@ post_user_text) using FakeProxy actors, without hitting any real LLM.
 The actors are driven via :meth:`ParticipantActor.step` (synchronous)
 so tests don't depend on thread timing.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -60,8 +61,7 @@ class WiringSmoke(unittest.TestCase):
             auto_start=False,
         )
         try:
-            self.assertEqual(set(session.state.participants.keys()),
-                             {"loom"})
+            self.assertEqual(set(session.state.participants.keys()), {"loom"})
             self.assertEqual(session.state.default_responder_id, "loom")
         finally:
             session.stop()
@@ -70,16 +70,14 @@ class WiringSmoke(unittest.TestCase):
 class BroadcastFlow(unittest.TestCase):
     def test_plain_user_message_broadcasts_to_all_actives(self):
         session = build_loom_session(
-            _wirings(("loom", "I am loom.", 0),
-                     ("claude_code", "I am claude.", 2)),
+            _wirings(("loom", "I am loom.", 0), ("claude_code", "I am claude.", 2)),
             default_responder_id="loom",
             auto_start=False,
         )
         try:
             post_user_text(session, "hi room")
             _drive(session.actors)
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
+            chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender != "user"]
             senders = {c.sender for c in chats}
             # v0 broadcast model: every active capable participant gets
             # a must-obligation and replies (or [PASS]es). Both agents
@@ -92,16 +90,14 @@ class BroadcastFlow(unittest.TestCase):
 class DirectMentionFlow(unittest.TestCase):
     def test_mention_drafts_addressed_only(self):
         session = build_loom_session(
-            _wirings(("loom", "loom always answers.", 0),
-                     ("claude_code", "claude here.", 2)),
+            _wirings(("loom", "loom always answers.", 0), ("claude_code", "claude here.", 2)),
             default_responder_id="loom",
             auto_start=False,
         )
         try:
             post_user_text(session, "@claude_code hi")
             _drive(session.actors)
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
+            chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender != "user"]
             senders = {c.sender for c in chats}
             # claude_code is required (direct-mention plan); loom has no
             # obligation in this turn and should NOT draft.
@@ -111,17 +107,16 @@ class DirectMentionFlow(unittest.TestCase):
 
     def test_multi_mention_drafts_each(self):
         session = build_loom_session(
-            _wirings(("loom", "loom.", 0),
-                     ("claude_code", "claude.", 2),
-                     ("gemini_cli", "gemini.", 1)),
+            _wirings(
+                ("loom", "loom.", 0), ("claude_code", "claude.", 2), ("gemini_cli", "gemini.", 1)
+            ),
             default_responder_id="loom",
             auto_start=False,
         )
         try:
             post_user_text(session, "@claude_code @gemini_cli weigh in")
             _drive(session.actors)
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
+            chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender != "user"]
             senders = {c.sender for c in chats}
             self.assertEqual(senders, {"claude_code", "gemini_cli"})
         finally:
@@ -140,8 +135,7 @@ class AcknowledgementFlow(unittest.TestCase):
             self.assertIsNone(session.coordinator.user_turn)
             # No agent should reply.
             _drive(session.actors)
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
+            chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender != "user"]
             self.assertEqual(chats, [])
         finally:
             session.stop()
@@ -157,13 +151,15 @@ class PassSuppressionEndToEnd(unittest.TestCase):
         try:
             post_user_text(session, "hi")
             _drive(session.actors)
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender == "loom"]
+            chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender == "loom"]
             self.assertEqual(chats, [])
-            ends = [e for e in session.bus.snapshot()
-                    if e.kind == "stream"
-                    and isinstance(e.body, dict)
-                    and e.body.get("stream_event") == "end"]
+            ends = [
+                e
+                for e in session.bus.snapshot()
+                if e.kind == "stream"
+                and isinstance(e.body, dict)
+                and e.body.get("stream_event") == "end"
+            ]
             self.assertEqual(ends[-1].body["status"], "passed")
         finally:
             session.stop()
@@ -172,8 +168,7 @@ class PassSuppressionEndToEnd(unittest.TestCase):
 class SlashCommands(unittest.TestCase):
     def setUp(self):
         self.session = build_loom_session(
-            _wirings(("loom", "ack", 0),
-                     ("claude_code", "ack", 2)),
+            _wirings(("loom", "ack", 0), ("claude_code", "ack", 2)),
             default_responder_id="loom",
             auto_start=False,
         )
@@ -215,16 +210,13 @@ class SlashCommands(unittest.TestCase):
     def test_remove_default_responder_falls_back(self):
         r = handle_slash_command("/remove loom", self.session)
         self.assertTrue(r.handled)
-        self.assertEqual(self.session.state.default_responder_id,
-                         "claude_code")
+        self.assertEqual(self.session.state.default_responder_id, "claude_code")
 
     def test_cancel_closes_turn(self):
         post_user_text(self.session, "anyone home")
         handle_slash_command("/cancel", self.session)
-        self.assertEqual(self.session.coordinator.user_turn.state,
-                         "closed")
-        self.assertEqual(self.session.coordinator.user_turn.closure_reason,
-                         "cancelled")
+        self.assertEqual(self.session.coordinator.user_turn.state, "closed")
+        self.assertEqual(self.session.coordinator.user_turn.closure_reason, "cancelled")
 
     def test_cancel_marks_obligations_resolved(self):
         post_user_text(self.session, "anyone home")
@@ -238,8 +230,7 @@ class SlashCommands(unittest.TestCase):
     def test_dm(self):
         r = handle_slash_command("/dm claude_code psst", self.session)
         self.assertTrue(r.handled)
-        dms = [e for e in self.session.bus.snapshot()
-               if e.channel == "dm:claude_code"]
+        dms = [e for e in self.session.bus.snapshot() if e.channel == "dm:claude_code"]
         self.assertEqual(len(dms), 1)
         self.assertEqual(dms[0].body, "psst")
 
@@ -248,8 +239,7 @@ class SlashCommands(unittest.TestCase):
         self.assertTrue(r.handled)
         self.assertIn("unknown command", r.message)
         self.assertIn("/notreal", r.message)
-        chats = [e for e in self.session.bus.snapshot()
-                 if e.kind == "chat" and e.sender == "user"]
+        chats = [e for e in self.session.bus.snapshot() if e.kind == "chat" and e.sender == "user"]
         self.assertEqual(chats, [])
 
     def test_quit(self):
@@ -262,9 +252,7 @@ class FloorControlSlashCommands(unittest.TestCase):
 
     def setUp(self):
         self.session = build_loom_session(
-            _wirings(("loom", "ack", 0),
-                     ("claude_code", "ack", 2),
-                     ("OAI", "ack", 1)),
+            _wirings(("loom", "ack", 0), ("claude_code", "ack", 2), ("OAI", "ack", 1)),
             default_responder_id="loom",
             auto_start=False,
         )
@@ -337,8 +325,7 @@ class FloorControlSlashCommands(unittest.TestCase):
         self.assertIn("teach derivatives", r.message)
 
     def test_control_dump(self):
-        handle_slash_command(
-            "/roles loom=teacher", self.session)
+        handle_slash_command("/roles loom=teacher", self.session)
         handle_slash_command("/brief", self.session)
         r = handle_slash_command("/control", self.session)
         self.assertIn("loom=teacher", r.message)
@@ -346,13 +333,15 @@ class FloorControlSlashCommands(unittest.TestCase):
 
     def test_directed_turn_sets_wait_for_user_after_close(self):
         session = build_loom_session(
-            _wirings(("loom", "loom reply", 0),
-                     ("claude_code", "claude reply", 2)),
+            _wirings(("loom", "loom reply", 0), ("claude_code", "claude reply", 2)),
             default_responder_id="loom",
             auto_start=False,
         )
         try:
-            post_user_text(session, "@loom hi", )
+            post_user_text(
+                session,
+                "@loom hi",
+            )
             for a in session.actors:
                 a.step()
             self.assertTrue(session.state.control.wait_for_user)
@@ -374,9 +363,7 @@ class JournalIntegration(unittest.TestCase):
                 _drive(session.actors)
             finally:
                 session.stop()
-            events_path = (
-                __import__("pathlib").Path(tmpdir) / "events.jsonl"
-            )
+            events_path = __import__("pathlib").Path(tmpdir) / "events.jsonl"
             self.assertTrue(events_path.exists())
             content = events_path.read_text()
             self.assertGreater(len(content.splitlines()), 0)
@@ -400,8 +387,7 @@ class ConsoleSubscriber(unittest.TestCase):
         self.assertEqual(self.notes, [])
 
     def test_dm_chat_is_not_echoed_in_console(self):
-        e = ev.chat(sender="loom", body="psst",
-                    channel="dm:claude_code")
+        e = ev.chat(sender="loom", body="psst", channel="dm:claude_code")
         self.sub(e)
         self.assertEqual(self.notes, [])
 
@@ -422,22 +408,19 @@ class ConsoleSubscriber(unittest.TestCase):
         self.assertEqual(self.notes, ["\n· (no agent responded)"])
 
     def test_user_turn_closed_obligation_unresolved_renders_hint(self):
-        self.sub(ev.user_turn_closed(user_turn_id=0,
-                                     reason="obligation_unresolved"))
-        self.assertEqual(self.notes,
-                         ["\n· (required participant did not reply)"])
+        self.sub(ev.user_turn_closed(user_turn_id=0, reason="obligation_unresolved"))
+        self.assertEqual(self.notes, ["\n· (required participant did not reply)"])
 
     def test_user_turn_closed_cancelled_renders(self):
         self.sub(ev.user_turn_closed(user_turn_id=0, reason="cancelled"))
         self.assertEqual(self.notes, ["\n· user turn closed (cancelled)"])
 
     def test_outbound_user_dm_renders_with_target(self):
-        e = ev.chat(sender="user", body="psst quiet",
-                    addressees=["claude_code"],
-                    channel="dm:claude_code")
+        e = ev.chat(
+            sender="user", body="psst quiet", addressees=["claude_code"], channel="dm:claude_code"
+        )
         self.sub(e)
-        self.assertEqual(self.notes,
-                         ["\n(dm → claude_code) ▸ psst quiet"])
+        self.assertEqual(self.notes, ["\n(dm → claude_code) ▸ psst quiet"])
 
     def test_main_channel_user_chat_still_suppressed(self):
         e = ev.chat(sender="user", body="hi room")
@@ -450,39 +433,47 @@ class ConsoleSubscriber(unittest.TestCase):
         self.assertEqual(self.notes, [])
 
     def test_user_turn_opened_is_suppressed(self):
-        self.sub(ev.user_turn_opened(
-            user_turn_id=0,
-            routing_case="question",
-            required_participants=["loom"],
-        ))
+        self.sub(
+            ev.user_turn_opened(
+                user_turn_id=0,
+                routing_case="question",
+                required_participants=["loom"],
+            )
+        )
         self.assertEqual(self.notes, [])
 
     def test_obligation_recorded_silent(self):
-        self.sub(ev.obligation_recorded(
-            obligation_id=1, participant_id="loom",
-            level="must", target_event_ids=[1], reason="x",
-        ))
+        self.sub(
+            ev.obligation_recorded(
+                obligation_id=1,
+                participant_id="loom",
+                level="must",
+                target_event_ids=[1],
+                reason="x",
+            )
+        )
         self.assertEqual(self.notes, [])
 
     def test_obligation_resolved_silent(self):
-        self.sub(ev.obligation_resolved(
-            obligation_id=1, participant_id="loom",
-            resolved_by_event_id=42,
-        ))
+        self.sub(
+            ev.obligation_resolved(
+                obligation_id=1,
+                participant_id="loom",
+                resolved_by_event_id=42,
+            )
+        )
         self.assertEqual(self.notes, [])
 
     def test_stream_events_produce_no_console_output(self):
-        self.sub(ev.stream_start(lease_id=0, participant_id="loom",
-                                 trigger_event_id=0))
-        self.sub(ev.stream_delta(lease_id=0, participant_id="loom",
-                                 text="hi"))
-        self.sub(ev.stream_end(lease_id=0, participant_id="loom",
-                               status="committed"))
+        self.sub(ev.stream_start(lease_id=0, participant_id="loom", trigger_event_id=0))
+        self.sub(ev.stream_delta(lease_id=0, participant_id="loom", text="hi"))
+        self.sub(ev.stream_end(lease_id=0, participant_id="loom", status="committed"))
         self.assertEqual(self.notes, [])
 
     def test_unknown_control_type_does_not_leak_dict(self):
-        e = ev.Event(kind="control", sender="system",
-                     body={"control_type": "made_up_event", "x": 1})
+        e = ev.Event(
+            kind="control", sender="system", body={"control_type": "made_up_event", "x": 1}
+        )
         self.sub(e)
         self.assertEqual(self.notes, [])
 
@@ -493,9 +484,11 @@ class ConsoleSubscriber(unittest.TestCase):
     def test_legacy_mode_changed_is_silently_dropped(self):
         """Old v1 ``mode_changed`` events come through unrecognized — the
         subscriber must drop them, not crash or leak."""
-        e = ev.Event(kind="control", sender="system",
-                     body={"control_type": "mode_changed",
-                           "old": "normal", "new": "council"})
+        e = ev.Event(
+            kind="control",
+            sender="system",
+            body={"control_type": "mode_changed", "old": "normal", "new": "council"},
+        )
         self.sub(e)
         self.assertEqual(self.notes, [])
 
@@ -519,14 +512,12 @@ class DynamicMembership(unittest.TestCase):
 
             self.assertIn("newcomer", session.state.participants)
             self.assertIn("newcomer", session.wirings)
-            self.assertIn(
-                "newcomer", {a.id for a in session.actors})
+            self.assertIn("newcomer", {a.id for a in session.actors})
 
             post_user_text(session, "hello room")
             _drive(session.actors)
 
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
+            chats = [e for e in session.bus.snapshot() if e.kind == "chat" and e.sender != "user"]
             senders = {c.sender for c in chats}
             self.assertEqual(senders, {"loom", "newcomer"})
         finally:
@@ -539,9 +530,9 @@ class DynamicMembership(unittest.TestCase):
         )
         try:
             with self.assertRaises(ValueError):
-                session.add_agent(ParticipantWiring(
-                    id="loom",
-                    proxy=SendProxyAdapter(FakeSendProxy("dup"))))
+                session.add_agent(
+                    ParticipantWiring(id="loom", proxy=SendProxyAdapter(FakeSendProxy("dup")))
+                )
         finally:
             session.stop()
 
@@ -552,9 +543,7 @@ class DynamicMembership(unittest.TestCase):
         )
         session.stop()
         with self.assertRaises(RuntimeError):
-            session.add_agent(ParticipantWiring(
-                id="x",
-                proxy=SendProxyAdapter(FakeSendProxy("y"))))
+            session.add_agent(ParticipantWiring(id="x", proxy=SendProxyAdapter(FakeSendProxy("y"))))
 
     def test_remove_agent_drops_from_participants_and_actors(self):
         session = build_loom_session(
@@ -566,8 +555,7 @@ class DynamicMembership(unittest.TestCase):
             session.remove_agent("claude_code")
             self.assertNotIn("claude_code", session.state.participants)
             self.assertNotIn("claude_code", session.wirings)
-            self.assertNotIn(
-                "claude_code", {a.id for a in session.actors})
+            self.assertNotIn("claude_code", {a.id for a in session.actors})
         finally:
             session.stop()
 
@@ -576,10 +564,10 @@ class DynamicMembership(unittest.TestCase):
         # close cleanly without that agent's draft.
         long_loom = (
             "loom answers with a sufficiently long reply that bypasses "
-            "the loop guard short-text duplicate detector for the test.")
+            "the loop guard short-text duplicate detector for the test."
+        )
         session = build_loom_session(
-            _wirings(("loom", long_loom, 0),
-                     ("claude_code", "claude reply", 2)),
+            _wirings(("loom", long_loom, 0), ("claude_code", "claude reply", 2)),
             default_responder_id="loom",
             auto_start=False,
         )
@@ -619,11 +607,13 @@ class DynamicMembership(unittest.TestCase):
             auto_start=True,
         )
         try:
-            session.add_agent(ParticipantWiring(
-                id="newcomer",
-                proxy=SendProxyAdapter(FakeSendProxy("nc reply")),
-                cost_tier=3,
-            ))
+            session.add_agent(
+                ParticipantWiring(
+                    id="newcomer",
+                    proxy=SendProxyAdapter(FakeSendProxy("nc reply")),
+                    cost_tier=3,
+                )
+            )
             new_actor = next(a for a in session.actors if a.id == "newcomer")
             self.assertIsNotNone(new_actor._thread)
             self.assertTrue(new_actor._thread.is_alive())

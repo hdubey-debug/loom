@@ -1,4 +1,5 @@
 """Tests for ``loom.kernel.actor`` — decision policy + ParticipantActor."""
+
 from __future__ import annotations
 
 import unittest
@@ -23,13 +24,14 @@ from loom.kernel.room import (
 )
 
 
-def _setup(*, default_responder=None,
-           members=("loom", "claude_code", "gemini_cli")):
+def _setup(*, default_responder=None, members=("loom", "claude_code", "gemini_cli")):
     bus = MessageBus()
-    state = RoomState(config=RoomConfig(
-        user_turn_idle_timeout_s=20,
-        user_turn_debounce_ms=200,
-    ))
+    state = RoomState(
+        config=RoomConfig(
+            user_turn_idle_timeout_s=20,
+            user_turn_debounce_ms=200,
+        )
+    )
     for i, pid in enumerate(members):
         state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
     if default_responder:
@@ -44,15 +46,16 @@ def _user_post(bus, body="hi", addressees=None):
 
 
 def _open_default(c, e, default_id):
-    plan = plan_for_default(default_id, reason="fallback",
-                            target_event_ids=[e.id])
+    plan = plan_for_default(default_id, reason="fallback", target_event_ids=[e.id])
     return c.open_user_turn(e, plan)
 
 
 def _open_required(c, e, required, *, optional=()):
     plan = plan_with_required(
-        list(required), routing_case="direct_mention",
-        target_event_ids=[e.id], reason="direct_mention",
+        list(required),
+        routing_case="direct_mention",
+        target_event_ids=[e.id],
+        reason="direct_mention",
         optional=list(optional),
     )
     return c.open_user_turn(e, plan)
@@ -80,8 +83,7 @@ class PickPriorityTrigger(unittest.TestCase):
         bus, state, c = _setup()
         e = _user_post(bus, "hi")
         ut = _open_required(c, e, required=("loom",))
-        bus.post(ev.dead_letter(e.id, reason="participant_removed",
-                                reroute_to="loom"))
+        bus.post(ev.dead_letter(e.id, reason="participant_removed", reroute_to="loom"))
         chosen = pick_priority_trigger(bus.snapshot(), "loom", ut)
         # dead_letter has priority 2; obligation has priority 3 — dead_letter
         # wins on priority class.
@@ -91,8 +93,7 @@ class PickPriorityTrigger(unittest.TestCase):
         bus, state, c = _setup(default_responder="loom")
         e = _user_post(bus, "hi")
         ut = _open_default(c, e, "loom")
-        bus.post(ev.dead_letter(e.id, reason="participant_removed",
-                                reroute_to="loom"))
+        bus.post(ev.dead_letter(e.id, reason="participant_removed", reroute_to="loom"))
         chosen = pick_priority_trigger(bus.snapshot(), "claude_code", ut)
         self.assertIsNone(chosen)
 
@@ -106,8 +107,7 @@ class PickPriorityTrigger(unittest.TestCase):
         # Custom hook treats system messages as the top trigger and
         # ignores everything else — verifies the override path.
         bus, state, c = _setup()
-        e_user = _user_post(bus, "claude_code, hi",
-                            addressees=["claude_code"])
+        e_user = _user_post(bus, "claude_code, hi", addressees=["claude_code"])
         ut = _open_required(c, e_user, required=("claude_code",))
         e_sys = ev.system("special signal")
         bus.post(e_sys)
@@ -118,9 +118,7 @@ class PickPriorityTrigger(unittest.TestCase):
                 return 0
             return None
 
-        chosen = pick_priority_trigger(
-            bus.snapshot(), "claude_code", ut,
-            priority_fn=_system_first)
+        chosen = pick_priority_trigger(bus.snapshot(), "claude_code", ut, priority_fn=_system_first)
         # Without override, the user direct mention would have won;
         # with override the system event wins (everything else is None).
         self.assertEqual(chosen.id, e_sys.id)
@@ -128,13 +126,10 @@ class PickPriorityTrigger(unittest.TestCase):
     def test_default_priority_fn_unchanged_when_none(self):
         # Passing priority_fn=None falls back to DEFAULT_TRIGGER_PRIORITY.
         bus, state, c = _setup()
-        e_user = _user_post(bus, "claude_code, hi",
-                            addressees=["claude_code"])
+        e_user = _user_post(bus, "claude_code, hi", addressees=["claude_code"])
         ut = _open_required(c, e_user, required=("claude_code",))
-        chosen_none = pick_priority_trigger(
-            bus.snapshot(), "claude_code", ut, priority_fn=None)
-        chosen_default = pick_priority_trigger(
-            bus.snapshot(), "claude_code", ut)
+        chosen_none = pick_priority_trigger(bus.snapshot(), "claude_code", ut, priority_fn=None)
+        chosen_default = pick_priority_trigger(bus.snapshot(), "claude_code", ut)
         self.assertEqual(chosen_none.id, chosen_default.id)
         self.assertEqual(chosen_none.id, e_user.id)
 
@@ -213,8 +208,7 @@ class DecideFunction(unittest.TestCase):
         bus, state, c = _setup(default_responder="loom")
         e = _user_post(bus, "hi")
         ut = _open_default(c, e, "loom")
-        bus.post(ev.dead_letter(e.id, reason="participant_removed",
-                                reroute_to="loom"))
+        bus.post(ev.dead_letter(e.id, reason="participant_removed", reroute_to="loom"))
         events = bus.snapshot(since=-1)
         d = decide(events, "loom", ut)
         self.assertEqual(d.action, "DRAFT")
@@ -240,22 +234,22 @@ class ParticipantActorIntegration(unittest.TestCase):
     """Drive the actor via :meth:`step` (no thread)."""
 
     def setUp(self):
-        self.bus, self.state, self.coordinator = _setup(
-            default_responder="loom")
+        self.bus, self.state, self.coordinator = _setup(default_responder="loom")
         self.draft_calls: list[tuple[str, int]] = []
 
         def handler(actor, trigger, lease):
             self.draft_calls.append((actor.id, trigger.id))
             self.coordinator.on_stream_end(
-                lease, "committed",
-                committed_text="ok", cost_tokens=2,
+                lease,
+                "committed",
+                committed_text="ok",
+                cost_tokens=2,
             )
 
         self.handler = handler
 
     def test_actor_drafts_default_responder_on_user_post(self):
-        actor = ParticipantActor(
-            "loom", self.bus, self.coordinator, self.handler)
+        actor = ParticipantActor("loom", self.bus, self.coordinator, self.handler)
         e = _user_post(self.bus, "hi")
         _open_default(self.coordinator, e, "loom")
         d = actor.step()
@@ -265,8 +259,7 @@ class ParticipantActorIntegration(unittest.TestCase):
         self.assertEqual(self.coordinator.user_turn.state, "closed")
 
     def test_actor_skips_when_not_eligible(self):
-        actor = ParticipantActor(
-            "claude_code", self.bus, self.coordinator, self.handler)
+        actor = ParticipantActor("claude_code", self.bus, self.coordinator, self.handler)
         e = _user_post(self.bus, "hi")
         _open_default(self.coordinator, e, "loom")
         d = actor.step()
@@ -274,8 +267,7 @@ class ParticipantActorIntegration(unittest.TestCase):
         self.assertEqual(self.draft_calls, [])
 
     def test_actor_filters_self_events(self):
-        actor = ParticipantActor(
-            "loom", self.bus, self.coordinator, self.handler)
+        actor = ParticipantActor("loom", self.bus, self.coordinator, self.handler)
         e1 = _user_post(self.bus, "hi")
         _open_default(self.coordinator, e1, "loom")
         actor.step()
@@ -288,8 +280,7 @@ class ParticipantActorIntegration(unittest.TestCase):
     def test_direct_mention_drafts_even_without_obligation(self):
         bus, state, coord = _setup(default_responder="loom")
         actor = ParticipantActor("claude_code", bus, coord, self.handler)
-        e = _user_post(bus, "@claude_code reply",
-                       addressees=["claude_code"])
+        e = _user_post(bus, "@claude_code reply", addressees=["claude_code"])
         # The plan only requires loom; claude_code has no obligation.
         _open_default(coord, e, "loom")
         d = actor.step()
@@ -318,17 +309,16 @@ class ActorErrorSurface(unittest.TestCase):
         actor = ParticipantActor("loom", bus, coord, boom)
         e = ev.chat(sender="user", body="hi")
         bus.post(e)
-        plan = plan_for_default("loom", reason="fallback",
-                                target_event_ids=[e.id])
+        plan = plan_for_default("loom", reason="fallback", target_event_ids=[e.id])
         coord.open_user_turn(e, plan)
 
         # Drive the loop body once via the same code path the loop uses.
         actor._step_with_error_handling()
 
         errors = [
-            x for x in bus.snapshot()
-            if x.kind == "control"
-            and x.body.get("control_type") == "actor_error"
+            x
+            for x in bus.snapshot()
+            if x.kind == "control" and x.body.get("control_type") == "actor_error"
         ]
         self.assertEqual(len(errors), 1)
         self.assertEqual(errors[0].body["participant_id"], "loom")
@@ -348,8 +338,7 @@ class ActorErrorSurface(unittest.TestCase):
         actor = ParticipantActor("loom", bus, coord, boom)
         e = ev.chat(sender="user", body="hi")
         bus.post(e)
-        plan = plan_for_default("loom", reason="fallback",
-                                target_event_ids=[e.id])
+        plan = plan_for_default("loom", reason="fallback", target_event_ids=[e.id])
         coord.open_user_turn(e, plan)
         # Must NOT raise.
         actor._step_with_error_handling()
@@ -370,8 +359,10 @@ class DebounceTriggerExtension(unittest.TestCase):
         # Open a turn requiring loom on the first post.
         e1 = _user_post(bus, "first")
         plan = plan_with_required(
-            ["loom"], routing_case="multi_opinion",
-            target_event_ids=[e1.id], reason="open_chat",
+            ["loom"],
+            routing_case="multi_opinion",
+            target_event_ids=[e1.id],
+            reason="open_chat",
         )
         ut = coord.open_user_turn(e1, plan)
 
@@ -390,8 +381,10 @@ class DebounceTriggerExtension(unittest.TestCase):
         bus, state, coord = _setup(default_responder="loom")
         e1 = _user_post(bus, "first")
         plan = plan_with_required(
-            ["loom"], routing_case="multi_opinion",
-            target_event_ids=[e1.id], reason="open_chat",
+            ["loom"],
+            routing_case="multi_opinion",
+            target_event_ids=[e1.id],
+            reason="open_chat",
         )
         ut = coord.open_user_turn(e1, plan)
         e2 = ev.chat(sender="user", body="quick follow-up")
@@ -418,7 +411,9 @@ class IdleTimeoutWakeup(unittest.TestCase):
         state.add_participant(ParticipantInfo(id="loom"))
         coord = RoomCoordinator(bus, state)
         actor = ParticipantActor(
-            "loom", bus, coord,
+            "loom",
+            bus,
+            coord,
             lambda actor, trig, lease: None,
         )
         self.assertLessEqual(
@@ -433,7 +428,9 @@ class IdleTimeoutWakeup(unittest.TestCase):
         state.add_participant(ParticipantInfo(id="loom"))
         coord = RoomCoordinator(bus, state)
         actor = ParticipantActor(
-            "loom", bus, coord,
+            "loom",
+            bus,
+            coord,
             lambda actor, trig, lease: None,
             wakeup_timeout_s=5.0,
         )

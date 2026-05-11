@@ -1,4 +1,5 @@
 """Tests for ``loom.kernel.obligations`` — pure dataclasses + helpers."""
+
 from __future__ import annotations
 
 import unittest
@@ -9,16 +10,22 @@ from loom.kernel import obligations as obl
 class ResponseObligationTests(unittest.TestCase):
     def test_defaults(self):
         o = obl.ResponseObligation(
-            id=1, participant_id="loom", level="must",
-            target_event_ids=[10], reason="direct_mention",
+            id=1,
+            participant_id="loom",
+            level="must",
+            target_event_ids=[10],
+            reason="direct_mention",
         )
         self.assertFalse(o.resolved)
         self.assertIsNone(o.resolved_by_event_id)
 
     def test_resolve_by_event(self):
         o = obl.ResponseObligation(
-            id=1, participant_id="loom", level="must",
-            target_event_ids=[10], reason="x",
+            id=1,
+            participant_id="loom",
+            level="must",
+            target_event_ids=[10],
+            reason="x",
         )
         o.resolve(by_event_id=42)
         self.assertTrue(o.resolved)
@@ -26,8 +33,11 @@ class ResponseObligationTests(unittest.TestCase):
 
     def test_resolve_administrative(self):
         o = obl.ResponseObligation(
-            id=1, participant_id="loom", level="must",
-            target_event_ids=[10], reason="x",
+            id=1,
+            participant_id="loom",
+            level="must",
+            target_event_ids=[10],
+            reason="x",
         )
         o.resolve(by_event_id=None)
         self.assertTrue(o.resolved)
@@ -53,8 +63,11 @@ class UserTurnPlanTests(unittest.TestCase):
 
     def test_full_plan(self):
         ob = obl.ResponseObligation(
-            id=0, participant_id="loom", level="must",
-            target_event_ids=[12], reason="direct_mention",
+            id=0,
+            participant_id="loom",
+            level="must",
+            target_event_ids=[12],
+            reason="direct_mention",
         )
         plan = obl.UserTurnPlan(
             requires_response=True,
@@ -80,8 +93,7 @@ class PlanForAcknowledgementTests(unittest.TestCase):
 
 class PlanForDefaultTests(unittest.TestCase):
     def test_with_responder(self):
-        plan = obl.plan_for_default("loom", reason="fallback",
-                                    target_event_ids=[3])
+        plan = obl.plan_for_default("loom", reason="fallback", target_event_ids=[3])
         self.assertTrue(plan.requires_response)
         self.assertEqual(plan.required_participants, {"loom"})
         self.assertEqual(len(plan.obligations), 1)
@@ -100,8 +112,10 @@ class PlanForDefaultTests(unittest.TestCase):
 class PlanWithRequiredTests(unittest.TestCase):
     def test_single(self):
         plan = obl.plan_with_required(
-            ["loom"], routing_case="question",
-            target_event_ids=[10], reason="ends with ?",
+            ["loom"],
+            routing_case="question",
+            target_event_ids=[10],
+            reason="ends with ?",
             rationale="plain question",
         )
         self.assertEqual(plan.required_participants, {"loom"})
@@ -109,19 +123,22 @@ class PlanWithRequiredTests(unittest.TestCase):
 
     def test_multi(self):
         plan = obl.plan_with_required(
-            ["a", "b"], routing_case="multi_opinion",
-            target_event_ids=[10], reason="multi-opinion",
+            ["a", "b"],
+            routing_case="multi_opinion",
+            target_event_ids=[10],
+            reason="multi-opinion",
         )
         self.assertEqual(plan.required_participants, {"a", "b"})
         self.assertEqual(len(plan.obligations), 2)
-        self.assertEqual({o.participant_id for o in plan.obligations},
-                         {"a", "b"})
+        self.assertEqual({o.participant_id for o in plan.obligations}, {"a", "b"})
 
     def test_empty_list_rejected(self):
         with self.assertRaises(ValueError):
             obl.plan_with_required(
-                [], routing_case="question",
-                target_event_ids=[1], reason="x",
+                [],
+                routing_case="question",
+                target_event_ids=[1],
+                reason="x",
             )
 
 
@@ -130,38 +147,48 @@ class TurnPlanFloorControlFields(unittest.TestCase):
 
     def test_allowed_speakers_defaults_to_required(self):
         plan = obl.plan_with_required(
-            ["a", "b"], routing_case="multi_opinion",
-            target_event_ids=[1], reason="x",
+            ["a", "b"],
+            routing_case="multi_opinion",
+            target_event_ids=[1],
+            reason="x",
         )
         self.assertEqual(plan.allowed_speakers, {"a", "b"})
 
     def test_allowed_speakers_explicit_overrides(self):
         plan = obl.plan_with_required(
-            ["a"], routing_case="direct_mention",
-            target_event_ids=[1], reason="x",
+            ["a"],
+            routing_case="direct_mention",
+            target_event_ids=[1],
+            reason="x",
             allowed_speakers={"a", "b"},
         )
         self.assertEqual(plan.allowed_speakers, {"a", "b"})
 
     def test_max_responses_defaults_to_allowed_count(self):
         plan = obl.plan_with_required(
-            ["a", "b", "c"], routing_case="multi_opinion",
-            target_event_ids=[1], reason="x",
+            ["a", "b", "c"],
+            routing_case="multi_opinion",
+            target_event_ids=[1],
+            reason="x",
         )
         self.assertEqual(plan.max_responses, 3)
 
     def test_max_responses_explicit(self):
         plan = obl.plan_with_required(
-            ["a", "b", "c"], routing_case="multi_opinion",
-            target_event_ids=[1], reason="x",
+            ["a", "b", "c"],
+            routing_case="multi_opinion",
+            target_event_ids=[1],
+            reason="x",
             max_responses=1,
         )
         self.assertEqual(plan.max_responses, 1)
 
     def test_wait_for_user_after_default_false(self):
         plan = obl.plan_with_required(
-            ["a"], routing_case="multi_opinion",
-            target_event_ids=[1], reason="x",
+            ["a"],
+            routing_case="multi_opinion",
+            target_event_ids=[1],
+            reason="x",
         )
         self.assertFalse(plan.wait_for_user_after)
 
@@ -172,8 +199,10 @@ class TurnPlanFloorControlFields(unittest.TestCase):
 
     def test_instruction_passed_through(self):
         plan = obl.plan_with_required(
-            ["a"], routing_case="direct_mention",
-            target_event_ids=[1], reason="x",
+            ["a"],
+            routing_case="direct_mention",
+            target_event_ids=[1],
+            reason="x",
             instruction="Teach the next step.",
         )
         self.assertEqual(plan.instruction, "Teach the next step.")

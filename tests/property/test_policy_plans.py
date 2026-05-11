@@ -10,6 +10,7 @@ Invariants for each of the four bundled policies:
   required participant (this is also enforced by __post_init__, so the
   property is a regression check).
 """
+
 from __future__ import annotations
 
 from hypothesis import HealthCheck, given, settings
@@ -17,7 +18,9 @@ from hypothesis import strategies as st
 
 from loom.kernel import events as ev
 from loom.kernel.room import (
-    ParticipantInfo, RoomConfig, RoomState,
+    ParticipantInfo,
+    RoomConfig,
+    RoomState,
 )
 from loom.policy.default import DefaultPolicy
 from loom.policy.open_chat import OpenChatPolicy
@@ -30,8 +33,7 @@ from tests.property.strategies import participant_ids
 def _build_state(pids: list[str]) -> RoomState:
     state = RoomState(config=RoomConfig())
     for pid in pids:
-        state.add_participant(
-            ParticipantInfo(id=pid, capable=True, cost_tier=1))
+        state.add_participant(ParticipantInfo(id=pid, capable=True, cost_tier=1))
     if pids:
         state.set_default_responder(pids[0])
         state.set_anchor(pids[0])
@@ -59,8 +61,7 @@ def test_default_policy_plan_invariants(pids, addressees, body):
     # Required ⊆ participants.
     assert set(plan.required_participants) <= participants | {p for p in addressees if p}
     # Required ∩ optional == ∅.
-    assert (set(plan.required_participants)
-            & set(plan.optional_participants)) == set()
+    assert (set(plan.required_participants) & set(plan.optional_participants)) == set()
     # If allowed_speakers is non-empty, it's a subset of participants.
     if plan.allowed_speakers:
         assert set(plan.allowed_speakers) <= participants
@@ -81,8 +82,7 @@ def test_open_chat_policy_plan_invariants(pids, addressees):
     plan = policy.plan_user_turn(e, state.view())
     participants = set(state.participants.keys())
 
-    assert (set(plan.required_participants)
-            & set(plan.optional_participants)) == set()
+    assert (set(plan.required_participants) & set(plan.optional_participants)) == set()
     if plan.allowed_speakers:
         assert set(plan.allowed_speakers) <= participants
     if plan.requires_response:
@@ -102,8 +102,7 @@ def test_round_robin_policy_plan_invariants(pids, addressees):
     plan = policy.plan_user_turn(e, state.view())
     participants = set(state.participants.keys())
 
-    assert (set(plan.required_participants)
-            & set(plan.optional_participants)) == set()
+    assert (set(plan.required_participants) & set(plan.optional_participants)) == set()
     if plan.allowed_speakers:
         assert set(plan.allowed_speakers) <= participants
     if plan.requires_response:
@@ -122,8 +121,7 @@ def test_single_responder_policy_plan_invariants(pids, addressees):
     plan = policy.plan_user_turn(e, state.view())
     participants = set(state.participants.keys())
 
-    assert (set(plan.required_participants)
-            & set(plan.optional_participants)) == set()
+    assert (set(plan.required_participants) & set(plan.optional_participants)) == set()
     if plan.allowed_speakers:
         assert set(plan.allowed_speakers) <= participants
     if plan.requires_response:

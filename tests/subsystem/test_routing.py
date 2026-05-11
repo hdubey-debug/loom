@@ -6,6 +6,7 @@ Drives all four bundled policies (``DefaultPolicy``, ``OpenChatPolicy``,
 HTML, 5 KB topics, throwing classifiers, vocative collisions, mid-turn
 membership churn for round-robin.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -34,11 +35,14 @@ def _state_with(*ids):
     return s
 
 
-def _agent(agent_id, response="reply long enough to bypass loop guards",
-           persona="", capability_block=""):
+def _agent(
+    agent_id, response="reply long enough to bypass loop guards", persona="", capability_block=""
+):
     return agent_from_send(
-        agent_id, lambda p: response,
-        persona=persona, capability_block=capability_block,
+        agent_id,
+        lambda p: response,
+        persona=persona,
+        capability_block=capability_block,
     )
 
 
@@ -46,8 +50,8 @@ def _agent(agent_id, response="reply long enough to bypass loop guards",
 # DefaultPolicy adversarial input handling.
 # ---------------------------------------------------------------------------
 
-class TestDefaultPolicyAdversarial:
 
+class TestDefaultPolicyAdversarial:
     def test_persona_with_html_renders_without_unescaping(self):
         # Persona could carry HTML-shaped tokens; the prompt must
         # render them literally (no XSS-style transformation; no
@@ -55,13 +59,17 @@ class TestDefaultPolicyAdversarial:
         from loom.kernel.bus import MessageBus
         from loom.kernel.coordinator import RoomCoordinator
         from loom.kernel.prompt import build_prompt
+
         bus = MessageBus()
         state = _state_with("loom")
         coord = RoomCoordinator(bus, state)
         persona = "<script>alert('xss')</script>"
         out = build_prompt(
-            "loom", trigger_event=None, coordinator=coord,
-            policy=DefaultPolicy(), persona=persona,
+            "loom",
+            trigger_event=None,
+            coordinator=coord,
+            policy=DefaultPolicy(),
+            persona=persona,
         )
         # Literal rendering: the angle-bracket-shaped tokens are
         # preserved verbatim; the prompt is a plain text string.
@@ -72,13 +80,16 @@ class TestDefaultPolicyAdversarial:
         from loom.kernel.bus import MessageBus
         from loom.kernel.coordinator import RoomCoordinator
         from loom.kernel.prompt import build_prompt
+
         long_topic = "x" * 5000
         bus = MessageBus()
         state = _state_with("loom")
         state.set_topic(long_topic)
         coord = RoomCoordinator(bus, state)
         out = build_prompt(
-            "loom", trigger_event=None, coordinator=coord,
+            "loom",
+            trigger_event=None,
+            coordinator=coord,
             policy=DefaultPolicy(),
         )
         assert long_topic in out
@@ -143,8 +154,8 @@ class TestDefaultPolicyAdversarial:
 # Vocative + mention edges.
 # ---------------------------------------------------------------------------
 
-class TestVocativeAndMention:
 
+class TestVocativeAndMention:
     def test_unmentioned_user_post_routes_to_default_responder(self):
         # Plain text, no @ mention — DefaultPolicy with default
         # responder set falls back to that participant.
@@ -175,8 +186,7 @@ class TestVocativeAndMention:
             policy=DefaultPolicy(),
             default_responder_id="a",
         ) as room:
-            replies = room.post_and_wait("@claude_code question?",
-                                         timeout=5.0)
+            replies = room.post_and_wait("@claude_code question?", timeout=5.0)
             senders = {e.sender for e in replies}
             assert "claude_code" in senders
 
@@ -185,8 +195,8 @@ class TestVocativeAndMention:
 # RoundRobin churn — adding / removing agents while the rotation is live.
 # ---------------------------------------------------------------------------
 
-class TestRoundRobinUnderChurn:
 
+class TestRoundRobinUnderChurn:
     def test_add_agent_does_not_break_pointer(self):
         # RoundRobin rotates through the configured order. Adding a
         # new agent must not crash the rotation.
@@ -226,11 +236,10 @@ class TestRoundRobinUnderChurn:
 # OpenChat broadcast.
 # ---------------------------------------------------------------------------
 
-class TestOpenChatBroadcast:
 
+class TestOpenChatBroadcast:
     @pytest.mark.stress
-    def test_open_chat_with_10_agents_all_drafted_in_one_turn(
-            self, room_factory, simple_agents):
+    def test_open_chat_with_10_agents_all_drafted_in_one_turn(self, room_factory, simple_agents):
         # 10 agents under OpenChatPolicy — every active capable agent
         # gets an obligation; all should commit drafts.
         agents = simple_agents(10)
@@ -243,8 +252,7 @@ class TestOpenChatBroadcast:
 
     @pytest.mark.stress
     @pytest.mark.breakpoint
-    def test_breakpoint_open_chat_agent_count_for_one_second_turn(
-            self, simple_agents):
+    def test_breakpoint_open_chat_agent_count_for_one_second_turn(self, simple_agents):
         # Find the agent count at which a single OpenChat turn no
         # longer completes within 5 s. Floor: at least 5 agents must
         # complete cleanly. Hard ceiling: 30 agents (the watchdog
@@ -255,6 +263,7 @@ class TestOpenChatBroadcast:
 
         def measure(n: int) -> float:
             import time as _t
+
             agents = simple_agents(n)
             room = LoomRoom(agents=agents, policy=OpenChatPolicy())
             try:
@@ -281,8 +290,8 @@ class TestOpenChatBroadcast:
 # SingleResponder degenerate cases.
 # ---------------------------------------------------------------------------
 
-class TestSingleResponderEdges:
 
+class TestSingleResponderEdges:
     def test_single_responder_with_only_target_present(self):
         long_a = "alpha sufficient long reply that bypasses loop guard."
         with LoomRoom(
@@ -304,4 +313,5 @@ class TestSingleResponderEdges:
             # Should not raise. Replies may be empty (target absent).
             replies = room.post_and_wait("hi", timeout=3.0)
             from loom import TurnResult
+
             assert isinstance(replies, TurnResult)

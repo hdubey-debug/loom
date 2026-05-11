@@ -28,6 +28,7 @@ as ``ceil(chunk_chars / 4)`` per delta and pass the total to
 ``coordinator.on_stream_end(...cost_tokens=...)``. Real proxies expose
 usage in their final response; integrating that is a v0.1 detail.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Iterator, Optional, Protocol
@@ -58,27 +59,29 @@ emit a leading newline). The trailing ``(\\s|$)`` enforces that
 
 # Idle / acknowledgement phrases that are belt-and-suspenders if a
 # model fails to emit ``[PASS]``. Compared after stripping and lowercasing.
-IDLE_PHRASES: frozenset[str] = frozenset({
-    "standing by",
-    "waiting",
-    "waiting for argument",
-    "waiting for context",
-    "ready",
-    "ok",
-    "okay",
-    "got it",
-    "received",
-    "noted",
-    "acknowledged",
-    "ack",
-})
+IDLE_PHRASES: frozenset[str] = frozenset(
+    {
+        "standing by",
+        "waiting",
+        "waiting for argument",
+        "waiting for context",
+        "ready",
+        "ok",
+        "okay",
+        "got it",
+        "received",
+        "noted",
+        "acknowledged",
+        "ack",
+    }
+)
 
 
 _CHAIR_SPEAK_RE = re.compile(
-    r"\(\s*[^)]*\braised\s+hand\b[^)]*\)|"      # "(claude_code raised hand: ...)"
-    r"\byou\s+have\s+the\s+floor\b|"            # "@OAI you have the floor"
-    r"\bthe\s+floor\s+is\s+yours\b|"            # "the floor is yours"
-    r"\bI\s+raise\s+my\s+hand\b",               # "I raise my hand"
+    r"\(\s*[^)]*\braised\s+hand\b[^)]*\)|"  # "(claude_code raised hand: ...)"
+    r"\byou\s+have\s+the\s+floor\b|"  # "@OAI you have the floor"
+    r"\bthe\s+floor\s+is\s+yours\b|"  # "the floor is yours"
+    r"\bI\s+raise\s+my\s+hand\b",  # "I raise my hand"
     re.IGNORECASE,
 )
 
@@ -93,10 +96,7 @@ def _strip_chair_speak(text: str) -> str:
     """
     if not _CHAIR_SPEAK_RE.search(text):
         return text
-    kept = [
-        line for line in text.splitlines()
-        if not _CHAIR_SPEAK_RE.search(line)
-    ]
+    kept = [line for line in text.splitlines() if not _CHAIR_SPEAK_RE.search(line)]
     return "\n".join(kept).strip()
 
 
@@ -151,7 +151,7 @@ def _is_idle_phrase(text: str) -> bool:
 
 def run_streaming_call(
     proxy: StreamingProxy,
-    prompt: object,
+    prompt: str,
     lease: TurnLease,
     bus: MessageBus,
     coordinator: RoomCoordinator,
@@ -166,11 +166,13 @@ def run_streaming_call(
     Always calls ``coordinator.on_stream_end(...)`` exactly once with
     the terminal status.
     """
-    bus.post(ev.stream_start(
-        lease_id=lease.id,
-        participant_id=lease.holder,
-        trigger_event_id=lease.trigger_event_id,
-    ))
+    bus.post(
+        ev.stream_start(
+            lease_id=lease.id,
+            participant_id=lease.holder,
+            trigger_event_id=lease.trigger_event_id,
+        )
+    )
 
     buffer = ""
     visible = ""
@@ -193,22 +195,26 @@ def run_streaming_call(
                     _try_cancel(proxy)
                     break
                 if len(buffer) >= coordinator.config.pass_buffer_chars:
-                    bus.post(ev.stream_delta(
-                        lease_id=lease.id,
-                        participant_id=lease.holder,
-                        text=buffer,
-                    ))
+                    bus.post(
+                        ev.stream_delta(
+                            lease_id=lease.id,
+                            participant_id=lease.holder,
+                            text=buffer,
+                        )
+                    )
                     visible = buffer
                     buffer = ""
                     flushed = True
                 continue
             # Already flushed: append delta directly.
             visible += chunk
-            bus.post(ev.stream_delta(
-                lease_id=lease.id,
-                participant_id=lease.holder,
-                text=chunk,
-            ))
+            bus.post(
+                ev.stream_delta(
+                    lease_id=lease.id,
+                    participant_id=lease.holder,
+                    text=chunk,
+                )
+            )
     except Exception as exc:
         status = "error"
         error = str(exc)
@@ -220,11 +226,13 @@ def run_streaming_call(
         else:
             visible = buffer
             if visible:
-                bus.post(ev.stream_delta(
-                    lease_id=lease.id,
-                    participant_id=lease.holder,
-                    text=visible,
-                ))
+                bus.post(
+                    ev.stream_delta(
+                        lease_id=lease.id,
+                        participant_id=lease.holder,
+                        text=visible,
+                    )
+                )
 
     # Post-stream belt-and-suspenders: drop empty / idle / duplicate /
     # chair-speak.
@@ -281,16 +289,19 @@ def run_streaming_call(
 
     # Terminal stream_end (always exactly one). For committed drafts it
     # follows the chat event and carries ``committed_event_id``.
-    bus.post(ev.stream_end(
-        lease_id=lease.id,
-        participant_id=lease.holder,
-        status=status,
-        error=error,
-        committed_event_id=committed_event_id,
-    ))
+    bus.post(
+        ev.stream_end(
+            lease_id=lease.id,
+            participant_id=lease.holder,
+            status=status,
+            error=error,
+            committed_event_id=committed_event_id,
+        )
+    )
 
     coordinator.on_stream_end(
-        lease, status,
+        lease,
+        status,
         committed_text=committed_text,
         cost_tokens=cost_tokens,
         committed_event_id=committed_event_id,
@@ -303,6 +314,7 @@ def run_streaming_call(
 # Default draft handler — wires the actor's draft callback to streaming.
 # ---------------------------------------------------------------------------
 
+
 def make_default_draft_handler(
     proxy_for: Callable[[str], StreamingProxy],
     prompt_builder: "Callable[[str, ev.Event, RoomCoordinator], object]",
@@ -314,9 +326,10 @@ def make_default_draft_handler(
     :class:`StreamingProxy`. ``prompt_builder`` constructs the per-turn
     prompt; see :mod:`loom.kernel.prompt`.
     """
+
     def handler(actor, trigger, lease):
         proxy = proxy_for(actor.id)
         prompt = prompt_builder(actor.id, trigger, actor.coordinator)
-        run_streaming_call(proxy, prompt, lease,
-                           actor.bus, actor.coordinator)
+        run_streaming_call(proxy, prompt, lease, actor.bus, actor.coordinator)
+
     return handler

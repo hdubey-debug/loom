@@ -8,6 +8,7 @@ re-enter a stopped room, only build a new one — but exercises the same
 code paths (``Journal.load_state``, ``restore_state``) a real
 multi-process consumer would hit on resume.
 """
+
 from __future__ import annotations
 
 import time
@@ -25,11 +26,11 @@ from loom.room import LoomRoom
 # Cold-start lifecycle.
 # ---------------------------------------------------------------------------
 
+
 class TestColdStartLive:
     """System-level: bring up a room from zero state and shut it down."""
 
-    def test_cold_start_no_journal_completes_5_turns_then_clean_stop(
-            self, varied_agents):
+    def test_cold_start_no_journal_completes_5_turns_then_clean_stop(self, varied_agents):
         agents = varied_agents(2, prefix="cs")
         room = LoomRoom(agents=agents, policy=OpenChatPolicy())
         try:
@@ -42,8 +43,7 @@ class TestColdStartLive:
             room.stop(timeout=5.0)
         # The autouse thread-leak guard catches any survivor.
 
-    def test_context_manager_enter_exit_idempotent_stop(
-            self, varied_agents):
+    def test_context_manager_enter_exit_idempotent_stop(self, varied_agents):
         agents = varied_agents(2, prefix="cm")
         room = LoomRoom(agents=agents, policy=OpenChatPolicy())
         with room:
@@ -54,8 +54,7 @@ class TestColdStartLive:
         room.stop(timeout=5.0)
 
     @pytest.mark.disk
-    def test_explicit_start_then_stop_no_thread_leak_with_journal(
-            self, varied_agents, tmp_path):
+    def test_explicit_start_then_stop_no_thread_leak_with_journal(self, varied_agents, tmp_path):
         agents = varied_agents(2, prefix="es")
         journal_dir = tmp_path / "session"
         room = LoomRoom(
@@ -78,12 +77,14 @@ class TestColdStartLive:
 # Process restart from journal — fresh second LoomRoom over same dir.
 # ---------------------------------------------------------------------------
 
+
 class TestProcessRestartFromJournal:
     """System-level: construct a fresh second room over an existing journal."""
 
     @pytest.mark.disk
     def test_restart_via_second_LoomRoom_replays_state_topic_responder_anchor(
-            self, journaled_room, restart_helper, varied_agents):
+        self, journaled_room, restart_helper, varied_agents
+    ):
         agents = varied_agents(2, prefix="r1")
         room = journaled_room(
             agents=agents,
@@ -109,7 +110,8 @@ class TestProcessRestartFromJournal:
 
     @pytest.mark.disk
     def test_restart_preserves_round_robin_turn_order_and_pointer(
-            self, journaled_room, restart_helper, varied_agents):
+        self, journaled_room, restart_helper, varied_agents
+    ):
         agents = varied_agents(3, prefix="rr")
         order = ["rr0", "rr1", "rr2"]
         room = journaled_room(
@@ -134,8 +136,8 @@ class TestProcessRestartFromJournal:
 
     @pytest.mark.disk
     def test_restart_preserves_room_control_state_floor_roles_style(
-            self, journaled_room, restart_helper, varied_agents,
-            scripted_console):
+        self, journaled_room, restart_helper, varied_agents, scripted_console
+    ):
         agents = varied_agents(2, prefix="rc")
         room = journaled_room(
             agents=agents,
@@ -146,11 +148,13 @@ class TestProcessRestartFromJournal:
         # internally on exit, so we capture the journal_dir first and
         # use a separate stop+restart flow.
         journal_dir = room.journal_dir
-        script = scripted_console([
-            "/roles rc0=teacher rc1=student",
-            "/brief",
-            "/quit",
-        ])
+        script = scripted_console(
+            [
+                "/roles rc0=teacher rc1=student",
+                "/brief",
+                "/quit",
+            ]
+        )
         room.run_console(prompt_fn=script.prompt_fn, notify=script.notify)
         # ``run_console`` stopped the room. Open a fresh Journal to
         # observe the snapshot, then construct the second LoomRoom.
@@ -177,7 +181,8 @@ class TestProcessRestartFromJournal:
 
     @pytest.mark.disk
     def test_restart_after_unclean_close_rebuilds_from_events_jsonl_alone(
-            self, journaled_room, varied_agents, tmp_path):
+        self, journaled_room, varied_agents, tmp_path
+    ):
         agents = varied_agents(2, prefix="un")
         room = journaled_room(
             agents=agents,
@@ -219,12 +224,14 @@ class TestProcessRestartFromJournal:
 # Graceful shutdown — stop during active turn / in-flight stream.
 # ---------------------------------------------------------------------------
 
+
 class TestGracefulShutdown:
     """System-level: stop() invariants under common in-flight conditions."""
 
     @pytest.mark.timing
     def test_stop_during_active_user_turn_completes_without_error(
-            self, multi_turn_session, varied_agents):
+        self, multi_turn_session, varied_agents
+    ):
         agents = varied_agents(2, prefix="dur")
         room = multi_turn_session(agents=agents, policy=OpenChatPolicy())
         # Fire-and-forget: don't wait for replies.
@@ -237,7 +244,8 @@ class TestGracefulShutdown:
         assert all(actor.stopped for actor in room.session.actors)
 
     def test_stop_drains_pending_journal_snapshots_before_close(
-            self, journaled_room, varied_agents):
+        self, journaled_room, varied_agents
+    ):
         # Force a snapshot rotation by driving more events than
         # snapshot_every_events (default 100). The kernel emits ~6-8
         # events per broadcast turn with 2 agents, so 20 turns ≈ 120+.
@@ -256,7 +264,8 @@ class TestGracefulShutdown:
         assert snap.get("version") in (1, 2, 3, 4, 5)
 
     def test_stop_with_in_flight_streams_marks_lease_expired_or_cancelled(
-            self, mixed_agent_room, event_recorder):
+        self, mixed_agent_room, event_recorder
+    ):
         room = mixed_agent_room(
             healthy=2,
             adversarial=[("hang", 1)],
@@ -273,8 +282,7 @@ class TestGracefulShutdown:
         # (the cancel() ran but the underlying time.sleep can't be
         # interrupted) — we only assert that the stream terminated.
         stream_events = event_recorder.by_kind("stream")
-        end_events = [e for e in stream_events
-                      if e.body.get("stream_event") == "end"]
+        end_events = [e for e in stream_events if e.body.get("stream_event") == "end"]
         assert len(end_events) >= 1
 
 
@@ -282,13 +290,14 @@ class TestGracefulShutdown:
 # Restart and resume — continue the user_turn_id sequence.
 # ---------------------------------------------------------------------------
 
+
 class TestRestartAndResume:
     """System-level: post-restart user_turn_ids continue monotonically."""
 
     @pytest.mark.disk
     def test_resume_post_restart_continues_user_turn_id_sequence_monotonic(
-            self, journaled_room, restart_helper, varied_agents,
-            event_recorder):
+        self, journaled_room, restart_helper, varied_agents, event_recorder
+    ):
         agents = varied_agents(2, prefix="rs")
         room = journaled_room(
             agents=agents,
@@ -298,8 +307,7 @@ class TestRestartAndResume:
         for i in range(3):
             room.post_and_wait(f"q{i}", timeout=5.0)
         ids_pre = [
-            e.body.get("user_turn_id")
-            for e in event_recorder.by_control_type("user_turn_opened")
+            e.body.get("user_turn_id") for e in event_recorder.by_control_type("user_turn_opened")
         ]
         assert ids_pre == sorted(ids_pre)
 
@@ -310,14 +318,14 @@ class TestRestartAndResume:
         )
         # Attach a fresh recorder to the new bus.
         from tests.system.conftest import _EventRecorder
+
         rec2 = _EventRecorder()
         rec2.attach(new_room)
         try:
             for i in range(3):
                 new_room.post_and_wait(f"r{i}", timeout=5.0)
             ids_post = [
-                e.body.get("user_turn_id")
-                for e in rec2.by_control_type("user_turn_opened")
+                e.body.get("user_turn_id") for e in rec2.by_control_type("user_turn_opened")
             ]
             # The new room's coordinator starts a fresh user_turn_id
             # counter (in-process restart). The sequence is still

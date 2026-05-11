@@ -15,6 +15,7 @@ will fail loudly and force the author to either:
 Either way, the change is forced through review rather than slipping
 in silently.
 """
+
 from __future__ import annotations
 
 from hypothesis import given, strategies as st
@@ -44,16 +45,16 @@ def _build_session():
     return bus, coord
 
 
-@given(meta_key=st.sampled_from(_MARKER_KEYS),
-       meta_value=st.sampled_from(_MARKER_VALUES),
-       sender=st.sampled_from(["alice", "bob", "user"]),
-       body=st.text(min_size=1, max_size=40))
-def test_chat_event_meta_does_not_leak_into_prompt(
-        meta_key, meta_value, sender, body):
+@given(
+    meta_key=st.sampled_from(_MARKER_KEYS),
+    meta_value=st.sampled_from(_MARKER_VALUES),
+    sender=st.sampled_from(["alice", "bob", "user"]),
+    body=st.text(min_size=1, max_size=40),
+)
+def test_chat_event_meta_does_not_leak_into_prompt(meta_key, meta_value, sender, body):
     """Meta keys and values do not appear in the rendered prompt body."""
     bus, coord = _build_session()
-    chat = ev.chat(sender=sender, body=body,
-                   meta={meta_key: meta_value})
+    chat = ev.chat(sender=sender, body=body, meta={meta_key: meta_value})
     bus.post_internal(chat, auth=_KERNEL_AUTH)
     prompt = build_prompt("alice", chat, coord)
     # The body itself is rendered (that's the transcript) — that's fine.
@@ -61,10 +62,11 @@ def test_chat_event_meta_does_not_leak_into_prompt(
     assert meta_key not in prompt, (
         f"meta key {meta_key!r} leaked into prompt; review whether "
         "you want to apply _render_system_field fencing or a key "
-        "whitelist.")
+        "whitelist."
+    )
     assert meta_value not in prompt, (
-        f"meta value {meta_value!r} leaked into prompt; same review "
-        "as for the key.")
+        f"meta value {meta_value!r} leaked into prompt; same review as for the key."
+    )
 
 
 def test_summary_event_meta_does_not_leak_into_prompt():

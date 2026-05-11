@@ -7,6 +7,7 @@ verify the static contracts (kernel/policy import asymmetry, charter
 always rendered first, read-only view immutability, single mutator)
 still hold under runtime pressure — not just at module import time.
 """
+
 from __future__ import annotations
 
 import re
@@ -34,8 +35,7 @@ _LOOM_POLICY_DIR = _REPO_ROOT / "loom" / "policy"
 
 
 def _python_files(directory: Path) -> list[Path]:
-    return [p for p in directory.rglob("*.py")
-            if "__pycache__" not in p.parts]
+    return [p for p in directory.rglob("*.py") if "__pycache__" not in p.parts]
 
 
 # ---------------------------------------------------------------------------
@@ -43,10 +43,9 @@ def _python_files(directory: Path) -> list[Path]:
 # many actors are running.
 # ---------------------------------------------------------------------------
 
-class TestImportAsymmetryAtScale:
 
-    def test_kernel_does_not_import_policy_after_active_room(
-            self, room_factory, simple_agents):
+class TestImportAsymmetryAtScale:
+    def test_kernel_does_not_import_policy_after_active_room(self, room_factory, simple_agents):
         # Spin a real room with many agents, then re-grep the kernel
         # source. The contract must still hold (no policy import has
         # been introduced as a quick fix during runtime stress).
@@ -72,10 +71,9 @@ class TestImportAsymmetryAtScale:
 # Read-only view under concurrent classification.
 # ---------------------------------------------------------------------------
 
-class TestReadOnlyViewUnderConcurrency:
 
-    def test_view_top_level_remains_frozen_under_repeated_classification(
-            self, thread_harness):
+class TestReadOnlyViewUnderConcurrency:
+    def test_view_top_level_remains_frozen_under_repeated_classification(self, thread_harness):
         # Many threads call ``state.view()`` and try to mutate the
         # returned frozen instance. Every attempt must raise.
         from dataclasses import FrozenInstanceError
@@ -124,8 +122,8 @@ class TestReadOnlyViewUnderConcurrency:
 # Charter renders first under load.
 # ---------------------------------------------------------------------------
 
-class TestCharterFirstUnderLoad:
 
+class TestCharterFirstUnderLoad:
     @pytest.mark.stress
     def test_charter_appears_before_topic_and_persona_under_500_builds(self):
         # Build the prompt 500 times with different persona/topic
@@ -142,8 +140,10 @@ class TestCharterFirstUnderLoad:
             topic = f"topic-{k}-x" * 50
             state.set_topic(topic)
             out = build_prompt(
-                "loom", trigger_event=None,
-                coordinator=coord, policy=DefaultPolicy(),
+                "loom",
+                trigger_event=None,
+                coordinator=coord,
+                policy=DefaultPolicy(),
                 persona=persona,
             )
             charter_idx = out.find(first_charter_line)
@@ -152,22 +152,21 @@ class TestCharterFirstUnderLoad:
             assert charter_idx >= 0
             if persona_idx >= 0:
                 assert charter_idx < persona_idx, (
-                    f"iteration {k}: charter {charter_idx} >= "
-                    f"persona {persona_idx}")
+                    f"iteration {k}: charter {charter_idx} >= persona {persona_idx}"
+                )
             if topic_idx >= 0:
                 assert charter_idx < topic_idx, (
-                    f"iteration {k}: charter {charter_idx} >= "
-                    f"topic {topic_idx}")
+                    f"iteration {k}: charter {charter_idx} >= topic {topic_idx}"
+                )
 
 
 # ---------------------------------------------------------------------------
 # Single-mutator invariant — only the coordinator writes to RoomState.
 # ---------------------------------------------------------------------------
 
-class TestCoordinatorLockSingleMutator:
 
-    def test_no_state_mutation_outside_coordinator_under_load(
-            self, thread_harness):
+class TestCoordinatorLockSingleMutator:
+    def test_no_state_mutation_outside_coordinator_under_load(self, thread_harness):
         # Many threads read ``state.view()`` while one thread mutates
         # via the coordinator. The coordinator's lock serializes.
         # We assert: every visible (room_epoch, participants) pair is
@@ -186,14 +185,11 @@ class TestCoordinatorLockSingleMutator:
             for _ in range(500):
                 view = state.view()
                 with observed_lock:
-                    observed.append(
-                        (view.room_epoch,
-                         frozenset(view.participants.keys())))
+                    observed.append((view.room_epoch, frozenset(view.participants.keys())))
 
         def writer():
             for i in range(20):
-                coord.register_participant(
-                    ParticipantInfo(id=f"churn{i}"))
+                coord.register_participant(ParticipantInfo(id=f"churn{i}"))
                 coord.unregister_participant(f"churn{i}")
 
         for _ in range(4):
@@ -210,18 +206,18 @@ class TestCoordinatorLockSingleMutator:
         for epoch, sets in by_epoch.items():
             assert len(sets) == 1, (
                 f"epoch {epoch} observed with {len(sets)} different "
-                f"participant sets — RoomState is not single-writer")
+                f"participant sets — RoomState is not single-writer"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Bus event-id monotonicity at scale.
 # ---------------------------------------------------------------------------
 
-class TestJournalEventIdMonotonicAtScale:
 
+class TestJournalEventIdMonotonicAtScale:
     @pytest.mark.stress
-    def test_2000_events_strict_monotonic_under_concurrent_post(
-            self, thread_harness):
+    def test_2000_events_strict_monotonic_under_concurrent_post(self, thread_harness):
         # Identical to the test in test_event_pipeline.py but driven
         # under a heavier load to exercise the bus condvar
         # contention path.
@@ -231,12 +227,10 @@ class TestJournalEventIdMonotonicAtScale:
 
         def poster(pid):
             for j in range(per_poster):
-                bus.post(ev.chat(sender=f"a{pid}", body="x",
-                                 meta={"pid": pid, "seq": j}))
+                bus.post(ev.chat(sender=f"a{pid}", body="x", meta={"pid": pid, "seq": j}))
 
         for pid in range(n_posters):
-            thread_harness.spawn(lambda p=pid: poster(p),
-                                  name=f"post{pid}")
+            thread_harness.spawn(lambda p=pid: poster(p), name=f"post{pid}")
         thread_harness.join_all(timeout=10.0)
         assert thread_harness.errors == []
 

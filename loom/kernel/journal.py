@@ -45,6 +45,7 @@ counters. State serialization reads :class:`RoomState` from the caller —
 the caller must hold the coordinator lock during snapshot if it wants
 a consistent picture.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -85,9 +86,13 @@ _SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5})
 class Journal:
     """Append-only events.jsonl + advisory room_state.json cache."""
 
-    def __init__(self, session_dir: str | Path, *,
-                 snapshot_every_events: int = 100,
-                 snapshot_queue_maxsize: int = 8) -> None:
+    def __init__(
+        self,
+        session_dir: str | Path,
+        *,
+        snapshot_every_events: int = 100,
+        snapshot_queue_maxsize: int = 8,
+    ) -> None:
         self.session_dir = Path(session_dir)
         # T6 / P0.6: lock down the session dir to owner-only. POSIX
         # ``mkdir(mode=0o700)`` is honored on creation; if the dir
@@ -121,12 +126,10 @@ class Journal:
         # default snapshot_every_events=100, an 8-deep queue covers
         # a 800-event burst before any disk write completes.
         self._snapshot_queue_maxsize = snapshot_queue_maxsize
-        self._snapshot_queue: queue.Queue = queue.Queue(
-            maxsize=snapshot_queue_maxsize)
+        self._snapshot_queue: queue.Queue = queue.Queue(maxsize=snapshot_queue_maxsize)
         self._snapshot_thread: Optional[threading.Thread] = None
         self._snapshots_dropped: int = 0
-        self._snapshot_drop_callback: Optional[
-            Callable[[int, int], None]] = None
+        self._snapshot_drop_callback: Optional[Callable[[int, int], None]] = None
 
         # Degraded-mode tracking. ``degraded`` flips True after any
         # ``events.jsonl`` write OR background snapshot write fails; the
@@ -285,8 +288,7 @@ class Journal:
             else:
                 self._event_count += 1
             snap_cb = self._snapshot_due_cb
-            due = (self._event_count - self._last_snapshot_count) \
-                >= self.snapshot_every_events
+            due = (self._event_count - self._last_snapshot_count) >= self.snapshot_every_events
         if _failure_exc is not None and cb is not None:
             try:
                 cb(_failure_exc)
@@ -346,9 +348,7 @@ class Journal:
                 # snapshot path — drops are observable, not load-bearing.
                 pass
 
-    def set_snapshot_due_callback(
-            self,
-            cb: Optional[Callable[[], Optional[dict]]]) -> None:
+    def set_snapshot_due_callback(self, cb: Optional[Callable[[], Optional[dict]]]) -> None:
         """Register a snapshot-payload producer.
 
         ``cb()`` is invoked synchronously on the post thread when the
@@ -363,9 +363,7 @@ class Journal:
         with self._lock:
             self._snapshot_due_cb = cb
 
-    def set_snapshot_drop_callback(
-            self,
-            cb: Optional[Callable[[int, int], None]]) -> None:
+    def set_snapshot_drop_callback(self, cb: Optional[Callable[[int, int], None]]) -> None:
         """Register a callback invoked when the snapshot queue overflows.
 
         ``cb(dropped_total, queue_depth)`` runs on the post thread (the
@@ -377,9 +375,7 @@ class Journal:
         with self._lock:
             self._snapshot_drop_callback = cb
 
-    def set_failure_callback(
-            self,
-            cb: Optional[Callable[[Exception], None]]) -> None:
+    def set_failure_callback(self, cb: Optional[Callable[[Exception], None]]) -> None:
         """Register a callback fired the first time a write fails.
 
         The callback receives the originating ``OSError``. It runs on
@@ -687,17 +683,13 @@ def restore_state(
     state.topic = _coerce_str_or_none(state_data.get("topic"))
     state.anchor_id = _coerce_str_or_none(state_data.get("anchor_id"))
     state.chair_id = _coerce_str_or_none(state_data.get("chair_id"))
-    state.default_responder_id = _coerce_str_or_none(
-        state_data.get("default_responder_id"))
-    state.default_summarizer_id = _coerce_str_or_none(
-        state_data.get("default_summarizer_id"))
+    state.default_responder_id = _coerce_str_or_none(state_data.get("default_responder_id"))
+    state.default_summarizer_id = _coerce_str_or_none(state_data.get("default_summarizer_id"))
     cur_ut = state_data.get("current_user_turn_id")
     state.current_user_turn_id = (
-        cur_ut if (cur_ut is None or _coerce_int(cur_ut, -1) == cur_ut)
-        else None
+        cur_ut if (cur_ut is None or _coerce_int(cur_ut, -1) == cur_ut) else None
     )
-    state.last_compacted_event_id = _coerce_int(
-        state_data.get("last_compacted_event_id", -1), -1)
+    state.last_compacted_event_id = _coerce_int(state_data.get("last_compacted_event_id", -1), -1)
 
     raw_participants = state_data.get("participants", [])
     if not isinstance(raw_participants, list):

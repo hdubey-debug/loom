@@ -9,6 +9,7 @@ Covers:
 - control_type_of / stream_event_of / is_direct_mention / is_known_control helpers.
 - Unknown control_type raises ValueError.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -31,8 +32,7 @@ class EventDefaults(unittest.TestCase):
         self.assertEqual(e.ts, 0.0)
 
     def test_chat_with_addressees(self):
-        e = ev.chat(sender="user", body="hi @claude_code",
-                    addressees=["claude_code"])
+        e = ev.chat(sender="user", body="hi @claude_code", addressees=["claude_code"])
         self.assertEqual(e.addressees, ["claude_code"])
         self.assertTrue(ev.is_direct_mention(e, "claude_code"))
         self.assertFalse(ev.is_direct_mention(e, "gemini_cli"))
@@ -71,14 +71,12 @@ class ControlEvents(unittest.TestCase):
         self.assertEqual(ev.control_type_of(e), "user_turn_opened")
         self.assertEqual(e.body["user_turn_id"], 7)
         self.assertEqual(e.body["routing_case"], "direct_mention")
-        self.assertEqual(e.body["required_participants"],
-                         ["claude_code", "gemini_cli"])
+        self.assertEqual(e.body["required_participants"], ["claude_code", "gemini_cli"])
         self.assertEqual(e.body["optional_participants"], [])
         self.assertEqual(e.body["rationale"], "user @-mentioned both")
 
     def test_user_turn_opened_defaults_optional_to_empty(self):
-        e = ev.user_turn_opened(1, routing_case="question",
-                                required_participants=["loom"])
+        e = ev.user_turn_opened(1, routing_case="question", required_participants=["loom"])
         self.assertEqual(e.body["optional_participants"], [])
         self.assertEqual(e.body["rationale"], "")
 
@@ -116,13 +114,11 @@ class ControlEvents(unittest.TestCase):
         self.assertEqual(e.body["resolved_by_event_id"], 99)
 
     def test_obligation_resolved_administrative(self):
-        e = ev.obligation_resolved(3, "claude_code",
-                                   resolved_by_event_id=None)
+        e = ev.obligation_resolved(3, "claude_code", resolved_by_event_id=None)
         self.assertIsNone(e.body["resolved_by_event_id"])
 
     def test_dead_letter(self):
-        e = ev.dead_letter(42, reason="participant_removed",
-                           reroute_to="loom")
+        e = ev.dead_letter(42, reason="participant_removed", reroute_to="loom")
         self.assertEqual(ev.control_type_of(e), "dead_letter")
         self.assertEqual(e.body["original_mention_event_id"], 42)
         self.assertEqual(e.body["reroute_to"], "loom")
@@ -182,15 +178,13 @@ class ControlEvents(unittest.TestCase):
 
     def test_retired_control_types_no_longer_in_set(self):
         # Sanity: the four retired control types must NOT be re-added.
-        for retired in ("mode_changed", "debate_turn",
-                        "forfeit", "debate_end"):
+        for retired in ("mode_changed", "debate_turn", "forfeit", "debate_end"):
             self.assertNotIn(retired, ev.CONTROL_TYPES)
 
 
 class StreamEvents(unittest.TestCase):
     def test_stream_start(self):
-        e = ev.stream_start(lease_id=5, participant_id="claude_code",
-                            trigger_event_id=12)
+        e = ev.stream_start(lease_id=5, participant_id="claude_code", trigger_event_id=12)
         self.assertEqual(e.kind, "stream")
         self.assertEqual(e.sender, "claude_code")
         self.assertEqual(ev.stream_event_of(e), "start")
@@ -198,27 +192,25 @@ class StreamEvents(unittest.TestCase):
         self.assertEqual(e.body["trigger_event_id"], 12)
 
     def test_stream_delta(self):
-        e = ev.stream_delta(lease_id=5, participant_id="claude_code",
-                            text="hel")
+        e = ev.stream_delta(lease_id=5, participant_id="claude_code", text="hel")
         self.assertEqual(ev.stream_event_of(e), "delta")
         self.assertEqual(e.body["text"], "hel")
 
     def test_stream_end_committed(self):
-        e = ev.stream_end(lease_id=5, participant_id="claude_code",
-                          status="committed")
+        e = ev.stream_end(lease_id=5, participant_id="claude_code", status="committed")
         self.assertEqual(ev.stream_event_of(e), "end")
         self.assertEqual(e.body["status"], "committed")
         self.assertNotIn("error", e.body)
 
     def test_stream_end_error_carries_message(self):
-        e = ev.stream_end(lease_id=5, participant_id="claude_code",
-                          status="error", error="rate limited")
+        e = ev.stream_end(
+            lease_id=5, participant_id="claude_code", status="error", error="rate limited"
+        )
         self.assertEqual(e.body["status"], "error")
         self.assertEqual(e.body["error"], "rate limited")
 
     def test_stream_end_terminal_statuses_and_commit_id(self):
-        for status in ("committed", "suppressed", "cancelled",
-                       "error", "lease_expired", "passed"):
+        for status in ("committed", "suppressed", "cancelled", "error", "lease_expired", "passed"):
             e = ev.stream_end(
                 lease_id=5,
                 participant_id="claude_code",
@@ -238,9 +230,9 @@ class SystemAndSummary(unittest.TestCase):
         self.assertEqual(e.body, "session started")
 
     def test_summary(self):
-        e = ev.summary("user asked about cosmology; "
-                       "claude argued for, gemini against",
-                       room_epoch=3)
+        e = ev.summary(
+            "user asked about cosmology; claude argued for, gemini against", room_epoch=3
+        )
         self.assertEqual(e.kind, "summary")
         self.assertEqual(e.channel, "main")
         self.assertEqual(e.room_epoch, 3)
@@ -277,8 +269,7 @@ class JsonlRoundTrip(unittest.TestCase):
         self.assertEqual(decoded, original)
 
     def test_stream_roundtrip(self):
-        original = ev.stream_end(lease_id=7, participant_id="gemini_cli",
-                                 status="suppressed")
+        original = ev.stream_end(lease_id=7, participant_id="gemini_cli", status="suppressed")
         line = original.to_jsonl()
         decoded = ev.Event.from_jsonl(line)
         self.assertEqual(decoded, original)
@@ -317,8 +308,7 @@ class Helpers(unittest.TestCase):
         legacy = ev.Event(
             kind="control",
             sender="system",
-            body={"control_type": "mode_changed",
-                  "old": "normal", "new": "council"},
+            body={"control_type": "mode_changed", "old": "normal", "new": "council"},
         )
         self.assertFalse(ev.is_known_control(legacy))
 
@@ -326,6 +316,7 @@ class Helpers(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Cross-factory invariants — properties every event factory should obey.
 # ---------------------------------------------------------------------------
+
 
 class EventInvariants(unittest.TestCase):
     """Properties that must hold across every event factory.
@@ -339,36 +330,36 @@ class EventInvariants(unittest.TestCase):
         """Build one example event per factory in :mod:`loom.kernel.events`."""
         return [
             ev.chat(sender="user", body="hi"),
-            ev.chat(sender="loom", body="reply",
-                    addressees=["claude_code"]),
+            ev.chat(sender="loom", body="reply", addressees=["claude_code"]),
             ev.system(body="boot"),
             ev.summary(body="compaction summary"),
             ev.topic_changed("old", "new"),
             ev.participant_added("loom"),
             ev.participant_removed("claude_code"),
             ev.user_turn_opened(
-                user_turn_id=1, routing_case="multi_opinion",
-                required_participants=["loom"]),
+                user_turn_id=1, routing_case="multi_opinion", required_participants=["loom"]
+            ),
             ev.user_turn_closed(user_turn_id=1, reason="completed"),
             ev.obligation_recorded(
-                obligation_id=1, participant_id="loom",
-                level="must", target_event_ids=[0], reason="r"),
-            ev.obligation_resolved(
-                obligation_id=1, participant_id="loom",
-                resolved_by_event_id=2),
-            ev.dead_letter(
-                original_mention_event_id=0, reason="r"),
+                obligation_id=1,
+                participant_id="loom",
+                level="must",
+                target_event_ids=[0],
+                reason="r",
+            ),
+            ev.obligation_resolved(obligation_id=1, participant_id="loom", resolved_by_event_id=2),
+            ev.dead_letter(original_mention_event_id=0, reason="r"),
             ev.default_responder_changed("loom", "claude"),
             ev.roles_assigned({"loom": "teacher"}),
             ev.floor_updated(wait_for_user=True),
             ev.style_changed("normal", "brief"),
             ev.journal_error("OSError", "disk full"),
             ev.actor_error("loom", "RuntimeError", "boom"),
-            ev.stream_start(lease_id=1, participant_id="loom",
-                            trigger_event_id=0),
+            ev.stream_start(lease_id=1, participant_id="loom", trigger_event_id=0),
             ev.stream_delta(lease_id=1, participant_id="loom", text="x"),
-            ev.stream_end(lease_id=1, participant_id="loom",
-                          status="committed", committed_event_id=2),
+            ev.stream_end(
+                lease_id=1, participant_id="loom", status="committed", committed_event_id=2
+            ),
         ]
 
     def test_every_factory_round_trips_through_jsonl(self):

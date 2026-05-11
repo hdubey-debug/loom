@@ -1,4 +1,5 @@
 """Tests for ``loom.kernel.streaming`` — PASS prefix + stream events."""
+
 from __future__ import annotations
 
 import unittest
@@ -39,9 +40,12 @@ class FakeProxy:
 
 def _setup(*, default_responder="loom"):
     bus = MessageBus()
-    state = RoomState(config=RoomConfig(
-        pass_buffer_chars=16, lease_ttl_s=60,
-    ))
+    state = RoomState(
+        config=RoomConfig(
+            pass_buffer_chars=16,
+            lease_ttl_s=60,
+        )
+    )
     for i, pid in enumerate(("loom", "claude_code", "gemini_cli")):
         state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
     if default_responder:
@@ -49,8 +53,7 @@ def _setup(*, default_responder="loom"):
     coord = RoomCoordinator(bus, state)
     user_event = ev.chat(sender="user", body="hi")
     bus.post(user_event)
-    plan = plan_for_default(default_responder, reason="fallback",
-                            target_event_ids=[user_event.id])
+    plan = plan_for_default(default_responder, reason="fallback", target_event_ids=[user_event.id])
     coord.open_user_turn(user_event, plan)
     lease = coord.acquire_lease(default_responder, user_event.id)
     assert lease is not None
@@ -208,8 +211,7 @@ class LeaseInvalidationMidStream(unittest.TestCase):
 class ProviderError(unittest.TestCase):
     def test_proxy_exception_emits_error(self):
         bus, state, coord, lease = _setup()
-        proxy = FakeProxy(["partial reply that is long enough", "more"],
-                          raises_at=1)
+        proxy = FakeProxy(["partial reply that is long enough", "more"], raises_at=1)
         run_streaming_call(proxy, "<prompt>", lease, bus, coord)
         sevs = _stream_events(bus)
         self.assertEqual(sevs[-1].body["status"], "error")
@@ -259,6 +261,7 @@ class AgentExceptionPropagation(unittest.TestCase):
         # ``SendProxyAdapter`` wraps a non-streaming callable; when send
         # raises, the streaming layer must surface it as ``status=error``.
         from loom.runtime import SendProxyAdapter
+
         bus, state, coord, lease = _setup()
 
         class SendRaiser:
@@ -308,22 +311,20 @@ class AddresseeParser(unittest.TestCase):
         self.assertEqual(out, [])
 
     def test_excludes_self(self):
-        out = parse_addressees("@claude_code self-ref",
-                               ["claude_code", "gemini_cli"],
-                               exclude="claude_code")
+        out = parse_addressees(
+            "@claude_code self-ref", ["claude_code", "gemini_cli"], exclude="claude_code"
+        )
         self.assertEqual(out, [])
 
     def test_dedup_preserves_first_occurrence(self):
-        out = parse_addressees("@a hi @a again",
-                               ["a"])
+        out = parse_addressees("@a hi @a again", ["a"])
         self.assertEqual(out, ["a"])
 
 
 class CanonicalChatEvent(unittest.TestCase):
     def test_committed_chat_event_carries_addressees(self):
         bus, state, coord, lease = _setup()
-        proxy = FakeProxy(["good point @gemini_cli, but ",
-                           "what about latency?"])
+        proxy = FakeProxy(["good point @gemini_cli, but ", "what about latency?"])
         run_streaming_call(proxy, "<prompt>", lease, bus, coord)
         chats = _chat_events(bus)
         self.assertEqual(len(chats), 1)
@@ -344,11 +345,14 @@ class CanonicalChatEvent(unittest.TestCase):
         proxy = FakeProxy(["a sufficiently long reply for canonical commit"])
         run_streaming_call(proxy, "<prompt>", lease, bus, coord)
         log = bus.snapshot()
-        chat_idx = next(i for i, e in enumerate(log)
-                        if e.kind == "chat" and e.sender == lease.holder)
-        end_idx = next(i for i, e in enumerate(log)
-                       if e.kind == "stream"
-                       and e.body.get("stream_event") == "end")
+        chat_idx = next(
+            i for i, e in enumerate(log) if e.kind == "chat" and e.sender == lease.holder
+        )
+        end_idx = next(
+            i
+            for i, e in enumerate(log)
+            if e.kind == "stream" and e.body.get("stream_event") == "end"
+        )
         self.assertLess(chat_idx, end_idx)
 
     def test_stream_end_committed_carries_committed_event_id(self):
@@ -393,10 +397,12 @@ class ChairSpeakStrip(unittest.TestCase):
 
     def test_chair_speak_line_stripped_useful_content_kept(self):
         bus, state, coord, lease = _setup()
-        proxy = FakeProxy([
-            "@gemini_cli you have the floor\n",
-            "The bug is the off-by-one in n - i; use n - 1 - i.",
-        ])
+        proxy = FakeProxy(
+            [
+                "@gemini_cli you have the floor\n",
+                "The bug is the off-by-one in n - i; use n - 1 - i.",
+            ]
+        )
         run_streaming_call(proxy, "<prompt>", lease, bus, coord)
         chats = _chat_events(bus)
         self.assertEqual(len(chats), 1)
@@ -405,10 +411,12 @@ class ChairSpeakStrip(unittest.TestCase):
 
     def test_raised_hand_line_stripped_useful_content_kept(self):
         bus, state, coord, lease = _setup()
-        proxy = FakeProxy([
-            "(claude_code raised hand: off-by-one bug)\n",
-            "The swap index is wrong; use n - 1 - i.",
-        ])
+        proxy = FakeProxy(
+            [
+                "(claude_code raised hand: off-by-one bug)\n",
+                "The swap index is wrong; use n - 1 - i.",
+            ]
+        )
         run_streaming_call(proxy, "<prompt>", lease, bus, coord)
         chats = _chat_events(bus)
         self.assertEqual(len(chats), 1)
@@ -417,10 +425,12 @@ class ChairSpeakStrip(unittest.TestCase):
 
     def test_floor_is_yours_phrase_stripped(self):
         bus, state, coord, lease = _setup()
-        proxy = FakeProxy([
-            "the floor is yours, friend.\n",
-            "Real content goes here for the room.",
-        ])
+        proxy = FakeProxy(
+            [
+                "the floor is yours, friend.\n",
+                "Real content goes here for the room.",
+            ]
+        )
         run_streaming_call(proxy, "<prompt>", lease, bus, coord)
         chats = _chat_events(bus)
         self.assertEqual(len(chats), 1)
@@ -448,19 +458,23 @@ class ShouldPostResponseHook(unittest.TestCase):
 
         class _Stub(ConversationPolicy):
             name = "stub"
+
             def plan_user_turn(self, user_event, state):
-                return plan_for_default(
-                    "loom", reason="fallback",
-                    target_event_ids=[user_event.id])
+                return plan_for_default("loom", reason="fallback", target_event_ids=[user_event.id])
+
             def should_post_response(self, *, body, state, participant_id):
                 return allow_fn(body, participant_id)
+
         return _Stub()
 
     def _setup_with_policy(self, policy):
         bus = MessageBus()
-        state = RoomState(config=RoomConfig(
-            pass_buffer_chars=16, lease_ttl_s=60,
-        ))
+        state = RoomState(
+            config=RoomConfig(
+                pass_buffer_chars=16,
+                lease_ttl_s=60,
+            )
+        )
         for i, pid in enumerate(("loom", "claude_code")):
             state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
         state.set_default_responder("loom")
@@ -468,8 +482,8 @@ class ShouldPostResponseHook(unittest.TestCase):
         user_event = ev.chat(sender="user", body="hi")
         bus.post(user_event)
         from loom.kernel.obligations import plan_for_default as _pfd
-        plan = _pfd("loom", reason="fallback",
-                    target_event_ids=[user_event.id])
+
+        plan = _pfd("loom", reason="fallback", target_event_ids=[user_event.id])
         coord.open_user_turn(user_event, plan)
         lease = coord.acquire_lease("loom", user_event.id)
         return bus, coord, lease
@@ -497,6 +511,7 @@ class ShouldPostResponseHook(unittest.TestCase):
     def test_buggy_hook_falls_through_to_commit(self):
         def _raises(_body, _pid):
             raise RuntimeError("boom")
+
         policy = self._stub_policy(_raises)
         bus, coord, lease = self._setup_with_policy(policy)
         proxy = FakeProxy(["A long enough clean reply to commit."])

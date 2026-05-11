@@ -7,6 +7,7 @@ whole list — replay-time RSS goes from O(E) to O(1).
 For this baseline we measure the current cost of loading and replaying
 N events as a list (which is what the kernel does today).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,8 +24,7 @@ pytestmark = pytest.mark.perf
 def _write_events(path: Path, n: int) -> None:
     with path.open("w") as f:
         for i in range(n):
-            e = ev.chat(sender="alice" if i % 2 == 0 else "bob",
-                        body=f"msg {i}")
+            e = ev.chat(sender="alice" if i % 2 == 0 else "bob", body=f"msg {i}")
             e.id = i
             e.ts = 1_700_000_000.0 + i * 0.001
             f.write(e.to_jsonl() + "\n")
@@ -35,8 +35,7 @@ def test_journal_load_events(bench, tmp_path: Path, size):
     """End-to-end load — disk read + per-line JSON parse + Event reconstruct."""
     j = Journal(session_dir=tmp_path)
     _write_events(j.events_path, size)
-    bench(lambda: j.load_events(),
-          name=f"Journal.load_events E={size}", iters=20, inner=1)
+    bench(lambda: j.load_events(), name=f"Journal.load_events E={size}", iters=20, inner=1)
 
 
 @pytest.mark.parametrize("size", [100, 1_000])
@@ -51,5 +50,4 @@ def test_journal_load_events_peak_bytes(bench, tmp_path: Path, size):
         out = j.load_events()
         del out
 
-    bench(load_and_drop,
-          name=f"Journal.load_events drop E={size}", iters=20, inner=1)
+    bench(load_and_drop, name=f"Journal.load_events drop E={size}", iters=20, inner=1)

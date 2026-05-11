@@ -39,6 +39,7 @@ Hook overview (override what you need):
 - :meth:`_rationale` / :meth:`_no_responders_rationale` — short
   human-readable strings written into the plan for debugging.
 """
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -62,9 +63,7 @@ class BasicPolicy(ConversationPolicy):
         user_event: Event,
         state: RoomStateView,
     ) -> obl.UserTurnPlan:
-        target_event_ids = (
-            [user_event.id] if user_event.id is not None else []
-        )
+        target_event_ids = [user_event.id] if user_event.id is not None else []
         responders = self._choose_responders(user_event, state)
         if not responders:
             return obl.plan_for_acknowledgement(
@@ -86,7 +85,9 @@ class BasicPolicy(ConversationPolicy):
 
     @abstractmethod
     def _choose_responders(
-        self, user_event: Event, state: RoomStateView,
+        self,
+        user_event: Event,
+        state: RoomStateView,
     ) -> set[str]:
         """Return the set of participant ids that must respond.
 
@@ -95,7 +96,7 @@ class BasicPolicy(ConversationPolicy):
         do not mutate it.
         """
 
-    def _routing_case(self) -> str:
+    def _routing_case(self) -> obl.RoutingCase:
         return "multi_opinion"
 
     def _wait_for_user_after(self) -> bool:
@@ -105,7 +106,9 @@ class BasicPolicy(ConversationPolicy):
         return ""
 
     def _rationale(
-        self, responders: list[str], state: RoomStateView,
+        self,
+        responders: list[str],
+        state: RoomStateView,
     ) -> str:
         return self.name
 

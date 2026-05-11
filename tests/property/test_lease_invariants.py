@@ -6,6 +6,7 @@ Invariants:
 - After a fresh acquisition the lease validates immediately (within TTL).
 - ``release_lease`` is idempotent (calling twice doesn't crash).
 """
+
 from __future__ import annotations
 
 import time
@@ -18,7 +19,9 @@ from loom.kernel.bus import MessageBus
 from loom.kernel.coordinator import RoomCoordinator
 from loom.kernel.obligations import plan_for_default
 from loom.kernel.room import (
-    ParticipantInfo, RoomConfig, RoomState,
+    ParticipantInfo,
+    RoomConfig,
+    RoomState,
 )
 
 
@@ -28,9 +31,8 @@ def _open_turn_for(coord: RoomCoordinator, holder: str):
     coord.post_user_event_and_open_turn(
         e,
         lambda posted: plan_for_default(
-            holder, reason="direct_mention",
-            target_event_ids=[posted.id],
-            rationale=f"@{holder}"),
+            holder, reason="direct_mention", target_event_ids=[posted.id], rationale=f"@{holder}"
+        ),
     )
     return e
 
@@ -122,8 +124,7 @@ def test_epoch_bump_invalidates_existing_leases(epoch_bumps):
         # Bump the epoch by add+remove.
         for i in range(epoch_bumps):
             tmp_id = f"tmp{i}"
-            coord.register_participant(
-                ParticipantInfo(id=tmp_id, capable=True, cost_tier=1))
+            coord.register_participant(ParticipantInfo(id=tmp_id, capable=True, cost_tier=1))
             coord.unregister_participant(tmp_id)
 
         assert coord.state.room_epoch != prior_epoch

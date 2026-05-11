@@ -6,6 +6,7 @@ Invariants:
 - Every subscriber observes events in the same order as the snapshot.
   (This was the bug fixed in the last pass — the property formalizes it.)
 """
+
 from __future__ import annotations
 
 import threading
@@ -33,8 +34,7 @@ def test_concurrent_post_yields_contiguous_monotonic_ids(n_producers, events_per
             for _ in range(events_per):
                 bus.post(ev.chat(sender="user", body="x", addressees=[]))
 
-        threads = [threading.Thread(target=worker)
-                   for _ in range(n_producers)]
+        threads = [threading.Thread(target=worker) for _ in range(n_producers)]
         for t in threads:
             t.start()
         for t in threads:
@@ -61,9 +61,11 @@ def test_all_subscribers_see_same_order(n_subscribers, events):
         locks = [threading.Lock() for _ in range(n_subscribers)]
 
         for i in range(n_subscribers):
+
             def subscriber(e: ev.Event, idx=i):
                 with locks[idx]:
                     per_sub[idx].append(e.id)
+
             bus.subscribe(subscriber)
 
         for _ in range(events):

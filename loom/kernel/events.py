@@ -13,12 +13,20 @@ append-only. Events are typed by ``kind``:
 
 The bus assigns ``id`` and ``ts`` on post; constructors leave them at zero.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import (
-    Any, Callable, Iterable, Iterator, Literal, Optional, Protocol,
-    Tuple, runtime_checkable,
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Literal,
+    Optional,
+    Protocol,
+    Tuple,
+    runtime_checkable,
 )
 import json
 import re
@@ -36,13 +44,27 @@ except ImportError:  # pragma: no cover
 
 
 EventKind = Literal[
-    "chat", "control", "stream", "system", "topic", "presence", "summary",
+    "chat",
+    "control",
+    "stream",
+    "system",
+    "topic",
+    "presence",
+    "summary",
 ]
 
 
-_VALID_KINDS = frozenset({
-    "chat", "control", "stream", "system", "topic", "presence", "summary",
-})
+_VALID_KINDS = frozenset(
+    {
+        "chat",
+        "control",
+        "stream",
+        "system",
+        "topic",
+        "presence",
+        "summary",
+    }
+)
 
 
 from loom.errors import LoomError  # noqa: E402  (kept here to avoid circular import at module-load)
@@ -93,6 +115,7 @@ class SecretShape(Protocol):
     increasing start-offset order. Overlapping matches across
     different shapes are merged by :func:`redact_error_text`.
     """
+
     name: str
 
     def detect(self, text: str) -> Iterable[Tuple[int, int]]: ...
@@ -101,6 +124,7 @@ class SecretShape(Protocol):
 @dataclass(frozen=True)
 class _RegexShape:
     """A :class:`SecretShape` backed by a single :class:`re.Pattern`."""
+
     name: str
     pattern: "re.Pattern[str]"
 
@@ -109,32 +133,23 @@ class _RegexShape:
             yield match.span()
 
 
-_DEFAULT_SHAPES: tuple[SecretShape, ...] = (
+_DEFAULT_SHAPES: "tuple[SecretShape, ...]" = (  # type: ignore[assignment]
     # Anthropic explicit ``sk-ant-`` prefix; listed before the generic
     # ``sk-`` shape so it wins span-merging when both match.
-    _RegexShape("anthropic_sk_ant",
-                re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
+    _RegexShape("anthropic_sk_ant", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
     # OpenAI / Anthropic legacy ``sk-`` prefix.
-    _RegexShape("openai_sk",
-                re.compile(r"sk-[A-Za-z0-9_-]{20,}")),
+    _RegexShape("openai_sk", re.compile(r"sk-[A-Za-z0-9_-]{20,}")),
     # OAuth / generic Bearer tokens. Real tokens are >=16 non-space chars
     # so ``Bearer foo`` doesn't trip the detector.
-    _RegexShape("bearer_token",
-                re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}")),
+    _RegexShape("bearer_token", re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}")),
     # AWS access key id (AKIA + 16 uppercase alphanumerics).
-    _RegexShape("aws_access_key",
-                re.compile(r"AKIA[0-9A-Z]{16}")),
+    _RegexShape("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
     # JWT (header.payload.signature) — three base64url segments.
-    _RegexShape("jwt",
-                re.compile(
-                    r"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
-                )),
+    _RegexShape("jwt", re.compile(r"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")),
     # Google API key (AIza + 35 chars).
-    _RegexShape("gcp_api_key",
-                re.compile(r"AIza[0-9A-Za-z_-]{35}")),
+    _RegexShape("gcp_api_key", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
     # Google OAuth access token (ya29. + 20+ chars).
-    _RegexShape("gcp_oauth",
-                re.compile(r"ya29\.[A-Za-z0-9_-]{20,}")),
+    _RegexShape("gcp_oauth", re.compile(r"ya29\.[A-Za-z0-9_-]{20,}")),
 )
 
 _ADAPTER_SHAPES: list[SecretShape] = []
@@ -181,8 +196,7 @@ def clear_secret_scrubbers() -> None:
     _ADAPTER_SHAPES.clear()
 
 
-def _collect_spans(text: str,
-                   shapes: Iterable[SecretShape]) -> list[Tuple[int, int]]:
+def _collect_spans(text: str, shapes: Iterable[SecretShape]) -> list[Tuple[int, int]]:
     """Collect non-overlapping ``(start, end)`` spans across detectors.
 
     Detectors that raise are skipped (errors must never break the
@@ -230,8 +244,7 @@ def redact_error_text(s: Any, *, max_chars: int = 500) -> str:
     if not s:
         return ""
     text = s if isinstance(s, str) else str(s)
-    spans = _collect_spans(
-        text, tuple(_DEFAULT_SHAPES) + tuple(_ADAPTER_SHAPES))
+    spans = _collect_spans(text, tuple(_DEFAULT_SHAPES) + tuple(_ADAPTER_SHAPES))
     if spans:
         parts: list[str] = []
         cursor = 0
@@ -276,22 +289,23 @@ class Event:
     top of slots because :class:`MessageBus` mutates ``id`` and ``ts``
     after construction (see ``bus.post``).
     """
+
     kind: EventKind
-    sender: str                                  # participant id, "user", or "system"
-    body: Any                                    # str for chat; dict for control/stream
-    channel: str = "main"                        # "main" | "dm:<id>"
+    sender: str  # participant id, "user", or "system"
+    body: Any  # str for chat; dict for control/stream
+    channel: str = "main"  # "main" | "dm:<id>"
     addressees: list[str] = field(default_factory=list)
     room_epoch: int = 0
     user_turn_id: Optional[int] = None
     meta: dict = field(default_factory=dict)
-    id: int = 0                                  # assigned by bus
+    id: int = 0  # assigned by bus
     # ``ts`` is wall-clock (``time.time``) — assigned by the bus on
     # post and used only for human-readable journal lines and replay
     # correlation. Duration math (idle timeouts, debounce, throttle
     # windows, lease bookkeeping) uses ``time.monotonic`` instead, so
     # an NTP step does not warp those windows. Don't compare ``ts``
     # against ``time.monotonic`` values.
-    ts: float = 0.0                              # epoch seconds; assigned by bus
+    ts: float = 0.0  # epoch seconds; assigned by bus
 
     def to_jsonl(self) -> str:
         # Direct field-access dict construction (avoids ``asdict``'s
@@ -345,10 +359,20 @@ class Event:
 # Shape validation (used by Event.from_jsonl)
 # ---------------------------------------------------------------------------
 
-_EVENT_FIELDS = frozenset({
-    "kind", "sender", "body", "channel", "addressees",
-    "room_epoch", "user_turn_id", "meta", "id", "ts",
-})
+_EVENT_FIELDS = frozenset(
+    {
+        "kind",
+        "sender",
+        "body",
+        "channel",
+        "addressees",
+        "room_epoch",
+        "user_turn_id",
+        "meta",
+        "id",
+        "ts",
+    }
+)
 
 
 def _is_int(v: Any) -> bool:
@@ -362,38 +386,32 @@ def _is_int(v: Any) -> bool:
 
 
 def _is_number(v: Any) -> bool:
-    return (isinstance(v, (int, float))
-            and not isinstance(v, bool))
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 def _validate_body_for_kind(kind: str, body: Any) -> None:
     """Per-kind body shape check. Caller has already validated ``kind``."""
     if kind in ("chat", "system", "summary", "topic"):
         if not isinstance(body, str):
-            raise EventShapeError(
-                f"{kind} body must be str, got {type(body).__name__}")
+            raise EventShapeError(f"{kind} body must be str, got {type(body).__name__}")
         return
     if kind == "control":
         if not isinstance(body, dict):
-            raise EventShapeError(
-                f"control body must be dict, got {type(body).__name__}")
+            raise EventShapeError(f"control body must be dict, got {type(body).__name__}")
         ct = body.get("control_type")
         if not isinstance(ct, str) or not ct:
-            raise EventShapeError(
-                "control body must contain a non-empty 'control_type' string")
+            raise EventShapeError("control body must contain a non-empty 'control_type' string")
         return
     if kind == "stream":
         if not isinstance(body, dict):
-            raise EventShapeError(
-                f"stream body must be dict, got {type(body).__name__}")
+            raise EventShapeError(f"stream body must be dict, got {type(body).__name__}")
         se = body.get("stream_event")
         if se not in ("start", "delta", "end"):
             raise EventShapeError(
-                f"stream body must have stream_event in "
-                f"{{start,delta,end}}, got {se!r}")
+                f"stream body must have stream_event in {{start,delta,end}}, got {se!r}"
+            )
         if not _is_int(body.get("lease_id")):
-            raise EventShapeError(
-                "stream body must have int 'lease_id'")
+            raise EventShapeError("stream body must have int 'lease_id'")
         return
     # ``presence`` is intentionally permissive — its shape is unspecified
     # in v0 and no consumer reads its body today.
@@ -407,8 +425,7 @@ def _validate_event_dict(d: Any) -> None:
     every existing factory output pass cleanly.
     """
     if not isinstance(d, dict):
-        raise EventShapeError(
-            f"event must be JSON object, got {type(d).__name__}")
+        raise EventShapeError(f"event must be JSON object, got {type(d).__name__}")
 
     kind = d.get("kind")
     # ``in`` on a frozenset raises TypeError for unhashable values
@@ -420,18 +437,15 @@ def _validate_event_dict(d: Any) -> None:
 
     sender = d.get("sender")
     if not isinstance(sender, str):
-        raise EventShapeError(
-            f"sender must be str, got {type(sender).__name__}")
+        raise EventShapeError(f"sender must be str, got {type(sender).__name__}")
 
     channel = d.get("channel", "main")
     if not isinstance(channel, str):
-        raise EventShapeError(
-            f"channel must be str, got {type(channel).__name__}")
+        raise EventShapeError(f"channel must be str, got {type(channel).__name__}")
 
     addressees = d.get("addressees", [])
     if not isinstance(addressees, list):
-        raise EventShapeError(
-            f"addressees must be list, got {type(addressees).__name__}")
+        raise EventShapeError(f"addressees must be list, got {type(addressees).__name__}")
     if not all(isinstance(a, str) for a in addressees):
         raise EventShapeError("addressees must be a list of str")
 
@@ -462,60 +476,62 @@ def _validate_event_dict(d: Any) -> None:
 # anchor_changed / default_summarizer_changed) is allowed but not required
 # to be emitted in v0. Mode/debate control types are gone — Loom v0 is a
 # single group-chat protocol with obligation-based routing.
-CONTROL_TYPES = frozenset({
-    "topic_changed",
-    "participant_added",
-    "participant_removed",
-    "user_turn_opened",
-    "user_turn_closed",
-    "obligation_recorded",
-    "obligation_resolved",
-    "dead_letter",
-    "default_responder_changed",
-    "chair_changed",
-    "anchor_changed",
-    "default_summarizer_changed",
-    "roles_assigned",
-    "floor_updated",
-    "style_changed",
-    # Policy watchdog (kernel-emitted, not policy-emitted) — observability
-    # for the kernel↔policy contract. ``policy_slow`` fires when a
-    # policy's ``plan_user_turn`` exceeds ~100ms; ``policy_error`` fires
-    # on a raised exception, then the coordinator dispatches on
-    # ``policy_error_mode``.
-    "policy_slow",
-    "policy_error",
-    # Journal degraded — fired the first time an events.jsonl write
-    # fails. The room keeps running but the on-disk audit trail is
-    # incomplete; downstream replay/resume cannot be trusted.
-    "journal_error",
-    # Actor loop error — fired when a participant's actor thread caught
-    # an exception while running ``step()``. The thread continues; the
-    # event surfaces the failure for diagnosis.
-    "actor_error",
-    # Journal-line tampering / parse failure mid-stream. Surfaces the
-    # offending line offset and a short raw-bytes excerpt so operators
-    # can locate the corrupt entry; emitted by ``Journal.iter_events``
-    # at replay time when ``Event.from_jsonl`` raises ``EventShapeError``.
-    "journal_corruption",
-    # Journal final-line truncation. Emitted when the LAST line of
-    # ``events.jsonl`` is non-empty but unparseable — almost always
-    # means an interrupted write at crash. The room can keep running;
-    # the last few seconds of state are lost.
-    "journal_truncated",
-    # Snapshot queue overflow (P2.3 / audit RES3). Emitted when the
-    # journal's bounded background-write queue dropped a snapshot
-    # because the disk couldn't keep up. The on-disk room_state.json
-    # remains coherent (atomic-rename); only the most-stale queued
-    # snapshot was discarded. Surfaces as a degraded-mode signal.
-    "snapshot_dropped",
-    # Lease-grant rejection (v0.2). Emitted when a lease-check chain
-    # rejects an :meth:`RoomCoordinator.acquire_lease` request. Carries
-    # ``holder``, ``check_name`` (the failing :class:`LeaseCheck`),
-    # ``deny_reason`` (short structured string), and
-    # ``trigger_event_id`` for observability.
-    "lease_denied",
-})
+CONTROL_TYPES = frozenset(
+    {
+        "topic_changed",
+        "participant_added",
+        "participant_removed",
+        "user_turn_opened",
+        "user_turn_closed",
+        "obligation_recorded",
+        "obligation_resolved",
+        "dead_letter",
+        "default_responder_changed",
+        "chair_changed",
+        "anchor_changed",
+        "default_summarizer_changed",
+        "roles_assigned",
+        "floor_updated",
+        "style_changed",
+        # Policy watchdog (kernel-emitted, not policy-emitted) — observability
+        # for the kernel↔policy contract. ``policy_slow`` fires when a
+        # policy's ``plan_user_turn`` exceeds ~100ms; ``policy_error`` fires
+        # on a raised exception, then the coordinator dispatches on
+        # ``policy_error_mode``.
+        "policy_slow",
+        "policy_error",
+        # Journal degraded — fired the first time an events.jsonl write
+        # fails. The room keeps running but the on-disk audit trail is
+        # incomplete; downstream replay/resume cannot be trusted.
+        "journal_error",
+        # Actor loop error — fired when a participant's actor thread caught
+        # an exception while running ``step()``. The thread continues; the
+        # event surfaces the failure for diagnosis.
+        "actor_error",
+        # Journal-line tampering / parse failure mid-stream. Surfaces the
+        # offending line offset and a short raw-bytes excerpt so operators
+        # can locate the corrupt entry; emitted by ``Journal.iter_events``
+        # at replay time when ``Event.from_jsonl`` raises ``EventShapeError``.
+        "journal_corruption",
+        # Journal final-line truncation. Emitted when the LAST line of
+        # ``events.jsonl`` is non-empty but unparseable — almost always
+        # means an interrupted write at crash. The room can keep running;
+        # the last few seconds of state are lost.
+        "journal_truncated",
+        # Snapshot queue overflow (P2.3 / audit RES3). Emitted when the
+        # journal's bounded background-write queue dropped a snapshot
+        # because the disk couldn't keep up. The on-disk room_state.json
+        # remains coherent (atomic-rename); only the most-stale queued
+        # snapshot was discarded. Surfaces as a degraded-mode signal.
+        "snapshot_dropped",
+        # Lease-grant rejection (v0.2). Emitted when a lease-check chain
+        # rejects an :meth:`RoomCoordinator.acquire_lease` request. Carries
+        # ``holder``, ``check_name`` (the failing :class:`LeaseCheck`),
+        # ``deny_reason`` (short structured string), and
+        # ``trigger_event_id`` for observability.
+        "lease_denied",
+    }
+)
 
 
 def _control(control_type: str, **payload: Any) -> Event:
@@ -532,21 +548,22 @@ def topic_changed(old: Optional[str], new: str) -> Event:
     return _control("topic_changed", old=old, new=new)
 
 
-def participant_added(participant_id: str,
-                      role_hints: Optional[dict] = None) -> Event:
-    return _control("participant_added", id=participant_id,
-                    role_hints=role_hints or {})
+def participant_added(participant_id: str, role_hints: Optional[dict] = None) -> Event:
+    return _control("participant_added", id=participant_id, role_hints=role_hints or {})
 
 
 def participant_removed(participant_id: str) -> Event:
     return _control("participant_removed", id=participant_id)
 
 
-def user_turn_opened(user_turn_id: int, *,
-                     routing_case: str,
-                     required_participants: list[str],
-                     optional_participants: Optional[list[str]] = None,
-                     rationale: str = "") -> Event:
+def user_turn_opened(
+    user_turn_id: int,
+    *,
+    routing_case: str,
+    required_participants: list[str],
+    optional_participants: Optional[list[str]] = None,
+    rationale: str = "",
+) -> Event:
     """Emit when a UserTurn opens.
 
     ``routing_case`` is the interpreter's classification (e.g.
@@ -567,24 +584,30 @@ def user_turn_opened(user_turn_id: int, *,
 
 
 UserTurnCloseReason = Literal[
-    "completed", "idle_timeout", "new_user_post", "cancelled",
-    "topic_changed", "no_responder", "obligation_unresolved",
+    "completed",
+    "idle_timeout",
+    "new_user_post",
+    "cancelled",
+    "topic_changed",
+    "no_responder",
+    "obligation_unresolved",
 ]
 
 
-def user_turn_closed(user_turn_id: int,
-                     reason: UserTurnCloseReason) -> Event:
-    return _control("user_turn_closed", user_turn_id=user_turn_id,
-                    reason=reason)
+def user_turn_closed(user_turn_id: int, reason: UserTurnCloseReason) -> Event:
+    return _control("user_turn_closed", user_turn_id=user_turn_id, reason=reason)
 
 
 ObligationLevel = Literal["may", "should", "must"]
 
 
-def obligation_recorded(obligation_id: int, participant_id: str,
-                        level: ObligationLevel,
-                        target_event_ids: list[int],
-                        reason: str) -> Event:
+def obligation_recorded(
+    obligation_id: int,
+    participant_id: str,
+    level: ObligationLevel,
+    target_event_ids: list[int],
+    reason: str,
+) -> Event:
     """Emit when the interpreter assigns a response obligation.
 
     ``target_event_ids`` lists the user-event ids the obligation answers
@@ -601,8 +624,9 @@ def obligation_recorded(obligation_id: int, participant_id: str,
     )
 
 
-def obligation_resolved(obligation_id: int, participant_id: str,
-                        resolved_by_event_id: Optional[int]) -> Event:
+def obligation_resolved(
+    obligation_id: int, participant_id: str, resolved_by_event_id: Optional[int]
+) -> Event:
     """Emit when an obligation is satisfied.
 
     ``resolved_by_event_id`` points at the committed chat event that
@@ -617,8 +641,9 @@ def obligation_resolved(obligation_id: int, participant_id: str,
     )
 
 
-def dead_letter(original_mention_event_id: int, reason: str,
-                reroute_to: Optional[str] = None) -> Event:
+def dead_letter(
+    original_mention_event_id: int, reason: str, reroute_to: Optional[str] = None
+) -> Event:
     return _control(
         "dead_letter",
         original_mention_event_id=original_mention_event_id,
@@ -627,10 +652,8 @@ def dead_letter(original_mention_event_id: int, reason: str,
     )
 
 
-def default_responder_changed(old_id: Optional[str],
-                              new_id: Optional[str]) -> Event:
-    return _control("default_responder_changed",
-                    old_id=old_id, new_id=new_id)
+def default_responder_changed(old_id: Optional[str], new_id: Optional[str]) -> Event:
+    return _control("default_responder_changed", old_id=old_id, new_id=new_id)
 
 
 def roles_assigned(roles: dict[str, str]) -> Event:
@@ -666,8 +689,7 @@ def style_changed(old: str, new: str) -> Event:
     return _control("style_changed", old=old, new=new)
 
 
-def lease_denied(*, holder: str, check_name: str, deny_reason: str,
-                 trigger_event_id: int) -> Event:
+def lease_denied(*, holder: str, check_name: str, deny_reason: str, trigger_event_id: int) -> Event:
     """Emit when an :meth:`acquire_lease` request is rejected.
 
     Carries the failing :class:`LeaseCheck` ``check_name`` and a short
@@ -695,13 +717,12 @@ def journal_error(exception_class: str, message: str) -> Event:
     fragments are scrubbed at the kernel boundary regardless of caller
     discipline.
     """
-    return _control("journal_error",
-                    exception_class=exception_class,
-                    message=redact_error_text(message))
+    return _control(
+        "journal_error", exception_class=exception_class, message=redact_error_text(message)
+    )
 
 
-def actor_error(participant_id: str, exception_class: str,
-                message: str) -> Event:
+def actor_error(participant_id: str, exception_class: str, message: str) -> Event:
     """Emit when an actor's loop catches an exception around ``step()``.
 
     The actor thread keeps running — this event is purely diagnostic.
@@ -709,14 +730,17 @@ def actor_error(participant_id: str, exception_class: str,
     + secret-pattern scrub) at the kernel boundary so a leaky adapter
     exception cannot reach the journal verbatim.
     """
-    return _control("actor_error",
-                    participant_id=participant_id,
-                    exception_class=exception_class,
-                    message=redact_error_text(message))
+    return _control(
+        "actor_error",
+        participant_id=participant_id,
+        exception_class=exception_class,
+        message=redact_error_text(message),
+    )
 
 
-def journal_corruption(line_offset: int, raw_excerpt: str,
-                       error_class: str, error_message: str) -> Event:
+def journal_corruption(
+    line_offset: int, raw_excerpt: str, error_class: str, error_message: str
+) -> Event:
     """Emit when a mid-stream journal line fails per-kind shape validation.
 
     Surfaced by :meth:`Journal.iter_events` at replay time on an
@@ -772,13 +796,16 @@ def snapshot_dropped(dropped_total: int, queue_depth: int) -> Event:
 # ---------------------------------------------------------------------------
 
 StreamEndStatus = Literal[
-    "committed", "suppressed", "cancelled", "error", "lease_expired",
+    "committed",
+    "suppressed",
+    "cancelled",
+    "error",
+    "lease_expired",
     "passed",
 ]
 
 
-def stream_start(lease_id: int, participant_id: str,
-                 trigger_event_id: int) -> Event:
+def stream_start(lease_id: int, participant_id: str, trigger_event_id: int) -> Event:
     return Event(
         kind="stream",
         sender=participant_id,
@@ -798,10 +825,13 @@ def stream_delta(lease_id: int, participant_id: str, text: str) -> Event:
     )
 
 
-def stream_end(lease_id: int, participant_id: str,
-               status: StreamEndStatus,
-               error: Optional[str] = None,
-               committed_event_id: Optional[int] = None) -> Event:
+def stream_end(
+    lease_id: int,
+    participant_id: str,
+    status: StreamEndStatus,
+    error: Optional[str] = None,
+    committed_event_id: Optional[int] = None,
+) -> Event:
     """Terminal stream event.
 
     The optional ``error`` field is run through :func:`redact_error_text`
@@ -823,12 +853,17 @@ def stream_end(lease_id: int, participant_id: str,
 # Chat / system / summary
 # ---------------------------------------------------------------------------
 
-def chat(sender: str, body: str, *,
-         addressees: Optional[list[str]] = None,
-         channel: str = "main",
-         user_turn_id: Optional[int] = None,
-         room_epoch: int = 0,
-         meta: Optional[dict] = None) -> Event:
+
+def chat(
+    sender: str,
+    body: str,
+    *,
+    addressees: Optional[list[str]] = None,
+    channel: str = "main",
+    user_turn_id: Optional[int] = None,
+    room_epoch: int = 0,
+    meta: Optional[dict] = None,
+) -> Event:
     return Event(
         kind="chat",
         sender=sender,
@@ -845,9 +880,9 @@ def system(body: str, **kwargs: Any) -> Event:
     return Event(kind="system", sender="system", body=body, **kwargs)
 
 
-def summary(body: str, *, channel: str = "main",
-            room_epoch: int = 0,
-            meta: Optional[dict] = None) -> Event:
+def summary(
+    body: str, *, channel: str = "main", room_epoch: int = 0, meta: Optional[dict] = None
+) -> Event:
     """Canonical main-channel compaction summary."""
     return Event(
         kind="summary",
@@ -862,6 +897,7 @@ def summary(body: str, *, channel: str = "main",
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def control_type_of(ev: Event) -> Optional[str]:
     """Return the ``control_type`` of a control event, else ``None``."""

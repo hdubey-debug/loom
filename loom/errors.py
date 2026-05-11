@@ -27,6 +27,7 @@ so this module stays a true leaf — kernel modules can ``from
 loom.errors import LoomError`` without a circular import. Users see the
 same surface either way.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -71,10 +72,10 @@ def __getattr__(name: str):
     """
     target = _LAZY_RE_EXPORTS.get(name)
     if target is None:
-        raise AttributeError(
-            f"module 'loom.errors' has no attribute {name!r}")
+        raise AttributeError(f"module 'loom.errors' has no attribute {name!r}")
     module_name, attr = target
     import importlib
+
     return getattr(importlib.import_module(module_name), attr)
 
 

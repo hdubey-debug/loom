@@ -17,6 +17,7 @@ violated (the migration plan's invariants 1, 2, 3, 6, 7):
   ``build_prompt`` with stub policy still includes kernel charter
   strings (PASS protocol, visibility cues).
 """
+
 from __future__ import annotations
 
 import re
@@ -38,8 +39,7 @@ _LOOM_POLICY_DIR = _REPO_ROOT / "loom" / "policy"
 
 
 def _python_files(directory: Path) -> list[Path]:
-    return [p for p in directory.rglob("*.py")
-            if "__pycache__" not in p.parts]
+    return [p for p in directory.rglob("*.py") if "__pycache__" not in p.parts]
 
 
 class KernelImportBoundary(unittest.TestCase):
@@ -57,14 +57,15 @@ class KernelImportBoundary(unittest.TestCase):
             if forbidden.search(text):
                 offenders.append(str(path.relative_to(_REPO_ROOT)))
         self.assertEqual(
-            offenders, [],
-            f"kernel must not import loom.policy; offenders: {offenders}")
+            offenders, [], f"kernel must not import loom.policy; offenders: {offenders}"
+        )
 
     def test_kernel_may_import_contracts(self):
         # Sanity: the contracts module is importable and the kernel can
         # reach it without circular trouble. The coordinator/prompt
         # type their ``policy:`` parameters against the ABC.
         from loom.kernel import prompt  # noqa: F401  reachable from kernel
+
         self.assertTrue(hasattr(ConversationPolicy, "plan_user_turn"))
 
     def test_policy_does_not_import_coordinator(self):
@@ -81,9 +82,8 @@ class KernelImportBoundary(unittest.TestCase):
             if forbidden.search(text):
                 offenders.append(str(path.relative_to(_REPO_ROOT)))
         self.assertEqual(
-            offenders, [],
-            "policy must not import loom.kernel.coordinator; "
-            f"offenders: {offenders}")
+            offenders, [], f"policy must not import loom.kernel.coordinator; offenders: {offenders}"
+        )
 
     def test_policy_does_not_import_journal(self):
         # Policies must not depend on the journal — they are pure
@@ -99,9 +99,8 @@ class KernelImportBoundary(unittest.TestCase):
             if forbidden.search(text):
                 offenders.append(str(path.relative_to(_REPO_ROOT)))
         self.assertEqual(
-            offenders, [],
-            "policy must not import loom.kernel.journal; "
-            f"offenders: {offenders}")
+            offenders, [], f"policy must not import loom.kernel.journal; offenders: {offenders}"
+        )
 
     def test_policy_does_not_import_kernel_auth_token(self):
         # ``_KERNEL_AUTH`` is the privileged sentinel that unlocks
@@ -117,9 +116,10 @@ class KernelImportBoundary(unittest.TestCase):
             if forbidden.search(text):
                 offenders.append(str(path.relative_to(_REPO_ROOT)))
         self.assertEqual(
-            offenders, [],
-            "policy must not reference the kernel auth token; "
-            f"offenders: {offenders}")
+            offenders,
+            [],
+            f"policy must not reference the kernel auth token; offenders: {offenders}",
+        )
 
 
 class PolicyPurity(unittest.TestCase):
@@ -144,12 +144,8 @@ class PolicyPurity(unittest.TestCase):
             for pat in self._FORBIDDEN_PATTERNS:
                 m = pat.search(text)
                 if m:
-                    offenders.append(
-                        (str(path.relative_to(_REPO_ROOT)), m.group(0)))
-        self.assertEqual(
-            offenders, [],
-            "policy modules must be pure; offenders: "
-            f"{offenders}")
+                    offenders.append((str(path.relative_to(_REPO_ROOT)), m.group(0)))
+        self.assertEqual(offenders, [], f"policy modules must be pure; offenders: {offenders}")
 
 
 class PolicyErrorFailsClosed(unittest.TestCase):
@@ -172,14 +168,11 @@ class PolicyErrorFailsClosed(unittest.TestCase):
         # Turn did not open (fail-closed).
         self.assertIsNone(coord.user_turn)
         # ``policy_error`` event recorded.
-        errors = [x for x in bus.snapshot()
-                  if ev.control_type_of(x) == "policy_error"]
+        errors = [x for x in bus.snapshot() if ev.control_type_of(x) == "policy_error"]
         self.assertEqual(len(errors), 1)
-        self.assertEqual(
-            errors[0].body["exception_class"], "RuntimeError")
+        self.assertEqual(errors[0].body["exception_class"], "RuntimeError")
         # No chat draft was committed.
-        chats = [x for x in bus.snapshot()
-                 if x.kind == "chat" and x.sender != "user"]
+        chats = [x for x in bus.snapshot() if x.kind == "chat" and x.sender != "user"]
         self.assertEqual(chats, [])
 
 
@@ -299,6 +292,7 @@ class PolicyReceivesReadOnlyView(unittest.TestCase):
         _, view = self._live_state_and_view()
         # ``frozen=True`` makes attribute assignment raise.
         from dataclasses import FrozenInstanceError
+
         with self.assertRaises(FrozenInstanceError):
             view.room_epoch = 999  # type: ignore[misc]
 

@@ -4,6 +4,7 @@ Each test names the specific uncovered line range it targets.
 Together with the existing journal tests these tests drive the file
 to ~100% line+branch coverage.
 """
+
 from __future__ import annotations
 
 import os
@@ -20,6 +21,7 @@ from loom.kernel.room import RoomConfig, RoomState
 # Lifecycle defensive paths
 # ---------------------------------------------------------------------------
 
+
 def test_open_is_idempotent_returns_early(tmp_path):
     """Covers: journal.py:112-113 — open() short-circuits when already open."""
     j = Journal(tmp_path)
@@ -34,6 +36,7 @@ def test_open_is_idempotent_returns_early(tmp_path):
 # on_event write-failure paths
 # ---------------------------------------------------------------------------
 
+
 def _make_event() -> ev.Event:
     e = ev.chat(sender="user", body="hi", addressees=[])
     e.id = 0
@@ -43,10 +46,13 @@ def _make_event() -> ev.Event:
 
 class _OSErrorOnWrite:
     """A file-like that raises OSError on write — for journal tests."""
+
     def write(self, *_a, **_k):
         raise OSError("disk full")
+
     def flush(self):
         pass
+
     def close(self):
         pass
 
@@ -101,6 +107,7 @@ def test_snapshot_due_callback_returns_non_dict_skips_snapshot(tmp_path):
 # ---------------------------------------------------------------------------
 # _write_snapshot_dict OSError paths
 # ---------------------------------------------------------------------------
+
 
 def test_fsync_oserror_is_swallowed(tmp_path):
     """Covers: journal.py:277-279 — fsync OSError tolerated, snapshot lands."""
@@ -199,6 +206,7 @@ def test_snapshot_replace_oserror_with_no_callback_still_marks_degraded(tmp_path
 # Background snapshot loop unexpected-exception path
 # ---------------------------------------------------------------------------
 
+
 def test_snapshot_loop_swallows_unexpected_exception_and_continues(tmp_path):
     """Covers: journal.py:312-318 — non-OSError in writer thread continues."""
     j = Journal(tmp_path)
@@ -229,6 +237,7 @@ def test_snapshot_loop_swallows_unexpected_exception_and_continues(tmp_path):
 # load_events / restore_state edge cases
 # ---------------------------------------------------------------------------
 
+
 def test_load_events_returns_empty_when_file_missing(tmp_path):
     """Covers: journal.py:381-382 — events.jsonl absent → empty list."""
     nonexistent = tmp_path / "nope-no-such-dir"
@@ -246,6 +255,7 @@ def test_load_events_skips_blank_lines(tmp_path):
 def test_load_state_returns_none_for_unsupported_version(tmp_path):
     """Covers: journal.py:374-376 — unknown version → None."""
     import json
+
     j = Journal(tmp_path)
     j.state_path.write_text(json.dumps({"version": 999, "topic": "stale"}))
     assert j.load_state() is None

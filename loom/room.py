@@ -58,6 +58,7 @@ The room does not introduce its own state — every kernel concept
 :class:`LoomSession` and is reachable via :attr:`session` for advanced
 consumers (escape hatch; not part of the supported facade).
 """
+
 from __future__ import annotations
 
 import difflib
@@ -124,6 +125,7 @@ def _default_prompt() -> str:
 # Agent → ParticipantWiring
 # ---------------------------------------------------------------------------
 
+
 def _warn_on_typoed_agent_attrs(agent: Agent) -> None:
     """Warn when an agent has attribute names that look like typos.
 
@@ -155,8 +157,7 @@ def _warn_on_typoed_agent_attrs(agent: Agent) -> None:
         # ``cost_tiers`` (0.947 vs ``cost_tier``); empirically does not
         # match common adapter attrs (``model``, ``client``, ``api_key``,
         # ``temperature``, ``max_tokens``, ...).
-        matches = difflib.get_close_matches(
-            cand, _KNOWN_OPTIONAL_AGENT_ATTRS, n=1, cutoff=0.75)
+        matches = difflib.get_close_matches(cand, _KNOWN_OPTIONAL_AGENT_ATTRS, n=1, cutoff=0.75)
         if not matches:
             continue
         warnings.warn(
@@ -182,10 +183,8 @@ def _agent_to_wiring(agent: Agent) -> ParticipantWiring:
     of a known optional (``persona``, ``capability_block``,
     ``cost_tier``, ``capable``, ``cancel``).
     """
-    if not hasattr(agent, "id") or not isinstance(agent.id, str) \
-            or not agent.id:
-        raise TypeError(
-            "Agent must have a non-empty string ``id`` attribute")
+    if not hasattr(agent, "id") or not isinstance(agent.id, str) or not agent.id:
+        raise TypeError("Agent must have a non-empty string ``id`` attribute")
 
     stream_method = getattr(agent, "stream", None)
     if callable(stream_method):
@@ -193,8 +192,7 @@ def _agent_to_wiring(agent: Agent) -> ParticipantWiring:
     else:
         send_method = getattr(agent, "send", None)
         if not callable(send_method):
-            raise TypeError(
-                f"Agent {agent.id!r} exposes neither stream() nor send()")
+            raise TypeError(f"Agent {agent.id!r} exposes neither stream() nor send()")
         proxy = SendProxyAdapter(agent, send_method="send")
 
     _warn_on_typoed_agent_attrs(agent)
@@ -212,6 +210,7 @@ def _agent_to_wiring(agent: Agent) -> ParticipantWiring:
 # ---------------------------------------------------------------------------
 # LoomRoom
 # ---------------------------------------------------------------------------
+
 
 class LoomRoom:
     """Public-facing room facade.
@@ -310,8 +309,7 @@ class LoomRoom:
         for a in agent_list:
             wiring = _agent_to_wiring(a)
             if wiring.id in seen_ids:
-                raise ValueError(
-                    f"duplicate agent id: {wiring.id!r}")
+                raise ValueError(f"duplicate agent id: {wiring.id!r}")
             seen_ids.add(wiring.id)
             wirings.append(wiring)
 
@@ -428,8 +426,7 @@ class LoomRoom:
         ``turn_id == -1``, and ``closed_reason == "no_turn_opened"``.
         """
         if not text:
-            raise ValueError(
-                "post_and_wait() requires a non-empty text message")
+            raise ValueError("post_and_wait() requires a non-empty text message")
 
         bus = self._session.bus
         # Snapshot bus length BEFORE posting so the wait loop measures
@@ -465,8 +462,7 @@ class LoomRoom:
                 break
             last_seen_len = new_len
             ut = self._session.coordinator.user_turn
-            if ut is None or ut.id != target_turn_id \
-                    or ut.state != "open":
+            if ut is None or ut.id != target_turn_id or ut.state != "open":
                 timed_out = False
                 break  # turn closed (or replaced)
 
@@ -510,6 +506,7 @@ class LoomRoom:
     def _monotonic() -> float:
         # Indirected so tests can patch it.
         import time
+
         return time.monotonic()
 
     def dm(
@@ -532,10 +529,11 @@ class LoomRoom:
         state = self._session.state
         if participant_id not in state.participants:
             raise KeyError(
-                f"unknown participant: {participant_id!r}; "
-                f"members: {sorted(state.participants)}")
+                f"unknown participant: {participant_id!r}; members: {sorted(state.participants)}"
+            )
         e = _ev.chat(
-            sender="user", body=text,
+            sender="user",
+            body=text,
             addressees=[participant_id],
             channel=f"dm:{participant_id}",
             room_epoch=state.room_epoch,
@@ -543,7 +541,8 @@ class LoomRoom:
 
         def _dm_plan(posted_event: Event):
             return plan_for_default(
-                participant_id, reason="dm",
+                participant_id,
+                reason="dm",
                 target_event_ids=[posted_event.id],
                 rationale="direct DM",
             )
@@ -566,9 +565,7 @@ class LoomRoom:
     def _require_participant(self, pid: str) -> None:
         members = self._session.state.participants
         if pid not in members:
-            raise KeyError(
-                f"unknown participant: {pid!r}; "
-                f"members: {sorted(members)}")
+            raise KeyError(f"unknown participant: {pid!r}; members: {sorted(members)}")
 
     def set_topic(self, topic: Optional[str]) -> None:
         """Set or clear the room topic. Pass ``None`` (or ``""``) to clear.
@@ -576,9 +573,7 @@ class LoomRoom:
         Caps at 500 chars; raises :class:`ValueError` past that.
         """
         if topic is not None and len(topic) > self._MAX_TOPIC_CHARS:
-            raise ValueError(
-                f"topic too long ({len(topic)} > "
-                f"{self._MAX_TOPIC_CHARS} chars)")
+            raise ValueError(f"topic too long ({len(topic)} > {self._MAX_TOPIC_CHARS} chars)")
         self._session.coordinator.set_topic(topic or None)
 
     def set_anchor(self, participant_id: str) -> None:
@@ -604,9 +599,7 @@ class LoomRoom:
     def set_style(self, style: StyleLevel) -> None:
         """Update brevity preference. One of ``"brief" | "normal" | "detailed"``."""
         if style not in ("brief", "normal", "detailed"):
-            raise ValueError(
-                f"style must be one of 'brief', 'normal', 'detailed'; "
-                f"got {style!r}")
+            raise ValueError(f"style must be one of 'brief', 'normal', 'detailed'; got {style!r}")
         self._session.coordinator.set_style(style)
 
     def cancel_turn(self) -> None:
@@ -641,8 +634,7 @@ class LoomRoom:
         # Start actor threads if not already running.
         self.start()
 
-        unsubscribe = self._session.bus.subscribe(
-            _make_console_subscriber(notify))
+        unsubscribe = self._session.bus.subscribe(_make_console_subscriber(notify))
         try:
             while True:
                 try:
@@ -653,8 +645,7 @@ class LoomRoom:
                 if not text:
                     continue
                 if text.startswith("/"):
-                    result = handle_slash_command(
-                        text, self._session, console=notify)
+                    result = handle_slash_command(text, self._session, console=notify)
                     if result.message:
                         notify(result.message)
                     if result.quit:

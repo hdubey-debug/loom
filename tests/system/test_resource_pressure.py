@@ -7,6 +7,7 @@ public API surface. Distinct from subsystem tests, which probe each
 subsystem in isolation — these tests assert observable behavior at
 the room facade level.
 """
+
 from __future__ import annotations
 
 import time
@@ -19,8 +20,10 @@ from loom.policy.open_chat import OpenChatPolicy
 from loom.room import LoomRoom
 
 
-_LONG = ("reply long enough to bypass both the pass buffer and the loop "
-         "guard short-text threshold for canonical commit by the kernel.")
+_LONG = (
+    "reply long enough to bypass both the pass buffer and the loop "
+    "guard short-text threshold for canonical commit by the kernel."
+)
 
 
 def _send_for(pid: str):
@@ -29,6 +32,7 @@ def _send_for(pid: str):
     def _send(prompt):
         counter[0] += 1
         return f"{pid} rp turn {counter[0]} {_LONG}"
+
     return _send
 
 
@@ -36,12 +40,14 @@ def _send_for(pid: str):
 # Throttle visibility — observable at the public API.
 # ---------------------------------------------------------------------------
 
+
 class TestThrottleVisibility:
     """System-level: the per-participant throttle limits visible drafts."""
 
     @pytest.mark.timing
     def test_starvation_visible_via_post_and_wait_returns_partial_replies(
-            self, multi_turn_session, varied_agents):
+        self, multi_turn_session, varied_agents
+    ):
         # The default per-participant throttle is 10/min. Drive 12
         # rapid turns with one agent on broadcast — at least one turn
         # in the back half should return no replies (throttled out).
@@ -58,12 +64,10 @@ class TestThrottleVisibility:
             if not non_user:
                 empty_turns += 1
         # At least one turn after the 10th should produce no reply.
-        assert empty_turns >= 1, (
-            "throttle never visibly fired across 12 rapid turns")
+        assert empty_turns >= 1, "throttle never visibly fired across 12 rapid turns"
 
     @pytest.mark.timing
-    def test_starved_agent_recovers_after_60s_window(
-            self, varied_agents, fake_clock):
+    def test_starved_agent_recovers_after_60s_window(self, varied_agents, fake_clock):
         # With the fake clock, advance past the 60s sliding window so
         # the throttle bucket clears. The agent can draft again.
         agents = varied_agents(1, prefix="rc")
@@ -84,7 +88,8 @@ class TestThrottleVisibility:
             room.stop(timeout=5.0)
 
     def test_throttle_does_not_starve_user_directly_addressed_agent(
-            self, multi_turn_session, varied_agents):
+        self, multi_turn_session, varied_agents
+    ):
         # With the default throttle and two agents, the throttle is
         # per-participant. Even if agent A is busy, agent B can still
         # respond when @-mentioned.
@@ -109,14 +114,15 @@ class TestThrottleVisibility:
 # Compaction in a live session — kernel keeps running past threshold.
 # ---------------------------------------------------------------------------
 
+
 class TestCompactionInLiveSession:
     """System-level: low compact_threshold + heavy traffic does not crash."""
 
     @pytest.mark.disk
     @pytest.mark.stress
     def test_compact_threshold_50_summary_emitted_at_or_after_50_events(
-            self, journaled_room, varied_agents, event_recorder,
-            config_factory):
+        self, journaled_room, varied_agents, event_recorder, config_factory
+    ):
         # The v0 kernel does not auto-compact via summary events, but
         # the threshold drives snapshot rotation on the journal side.
         # Verify: the event count crosses the threshold and the journal
@@ -135,7 +141,8 @@ class TestCompactionInLiveSession:
 
     @pytest.mark.stress
     def test_compaction_does_not_block_in_flight_user_turn(
-            self, journaled_room, varied_agents, config_factory):
+        self, journaled_room, varied_agents, config_factory
+    ):
         # Drive many turns; any compaction-driven snapshot writes run
         # off-thread and must not block the post path.
         cfg = config_factory(compact_threshold=15)
@@ -155,12 +162,14 @@ class TestCompactionInLiveSession:
         sorted_l = sorted(latencies)
         median = sorted_l[len(sorted_l) // 2]
         assert max(latencies) <= 5 * (median + 0.1), (
-            f"max={max(latencies):.3f}, median={median:.3f}")
+            f"max={max(latencies):.3f}, median={median:.3f}"
+        )
 
     @pytest.mark.stress
     @pytest.mark.breakpoint
     def test_breakpoint_compaction_frequency_at_event_throughput(
-            self, varied_agents, config_factory, binary_search, tmp_path):
+        self, varied_agents, config_factory, binary_search, tmp_path
+    ):
         # Find the per-turn latency under increasing compact_threshold
         # pressure. Lower threshold → more snapshot rotations. We
         # binary-search on the threshold value to find where a single
@@ -210,11 +219,13 @@ class TestCompactionInLiveSession:
 # Loop-guard effect on visible commits.
 # ---------------------------------------------------------------------------
 
+
 class TestLoopGuardEffect:
     """System-level: short duplicate replies are deduplicated by the kernel."""
 
     def test_two_short_dup_replies_second_suppressed_third_attempt_recovers(
-            self, multi_turn_session, event_recorder):
+        self, multi_turn_session, event_recorder
+    ):
         # Short text (<50 chars), exact duplicate → loop guard suppresses.
         # On the 3rd post the agent returns a different short text →
         # the IoU drops, and the new draft commits.
@@ -235,15 +246,13 @@ class TestLoopGuardEffect:
             room.post_and_wait(f"q{i}", timeout=3.0)
         # Look at stream_end statuses — at least one should be
         # ``suppressed`` (the duplicate short reply).
-        ends = [
-            e for e in event_recorder.by_kind("stream")
-            if e.body.get("stream_event") == "end"
-        ]
+        ends = [e for e in event_recorder.by_kind("stream") if e.body.get("stream_event") == "end"]
         statuses = [e.body.get("status") for e in ends]
         assert "suppressed" in statuses
 
     def test_long_replies_bypass_loop_guard(
-            self, multi_turn_session, varied_agents, event_recorder):
+        self, multi_turn_session, varied_agents, event_recorder
+    ):
         # Replies > 50 chars bypass the short-text gate → never
         # suppressed by the loop guard.
         agents = varied_agents(2, prefix="lb")
@@ -254,10 +263,7 @@ class TestLoopGuardEffect:
         event_recorder.attach(room)
         for i in range(5):
             room.post_and_wait(f"q{i}", timeout=5.0)
-        ends = [
-            e for e in event_recorder.by_kind("stream")
-            if e.body.get("stream_event") == "end"
-        ]
+        ends = [e for e in event_recorder.by_kind("stream") if e.body.get("stream_event") == "end"]
         statuses = [e.body.get("status") for e in ends]
         # Most should be committed; we don't tolerate any suppressed
         # on long replies.
@@ -265,7 +271,8 @@ class TestLoopGuardEffect:
         assert statuses.count("suppressed") == 0
 
     def test_loop_guard_resets_on_topic_change(
-            self, multi_turn_session, scripted_console, event_recorder):
+        self, multi_turn_session, scripted_console, event_recorder
+    ):
         # The kernel's LoopGuard is per-participant and persists across
         # topic changes — we verify the actual behavior rather than the
         # historic "topic resets" expectation. Short duplicate replies
@@ -293,10 +300,7 @@ class TestLoopGuardEffect:
             room.stop(timeout=5.0)
         # The first reply committed; subsequent identical short replies
         # are suppressed by the per-participant loop guard.
-        ends = [
-            e for e in event_recorder.by_kind("stream")
-            if e.body.get("stream_event") == "end"
-        ]
+        ends = [e for e in event_recorder.by_kind("stream") if e.body.get("stream_event") == "end"]
         statuses = [e.body.get("status") for e in ends]
         # At least one committed (the first).
         assert "committed" in statuses

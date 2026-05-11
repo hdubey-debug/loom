@@ -8,6 +8,7 @@ Covers:
 - All-inactive ⇒ no-response plan.
 - Construction validates the order argument.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -20,8 +21,7 @@ from loom.policy.round_robin import RoundRobinPolicy
 def _state_with(*pids_with_active: tuple[str, bool, bool]) -> RoomState:
     state = RoomState(config=RoomConfig())
     for pid, active, capable in pids_with_active:
-        state.add_participant(
-            ParticipantInfo(id=pid, active=active, capable=capable))
+        state.add_participant(ParticipantInfo(id=pid, active=active, capable=capable))
     return state
 
 
@@ -29,8 +29,7 @@ class RoundRobinFirstTurn(unittest.TestCase):
     """First post: turn_order is empty → arm round-robin."""
 
     def test_first_post_arms_mode_and_picks_order_zero(self):
-        state = _state_with(("a", True, True), ("b", True, True),
-                            ("c", True, True))
+        state = _state_with(("a", True, True), ("b", True, True), ("c", True, True))
         e = ev.chat(sender="user", body="kickoff")
         plan = RoundRobinPolicy(["a", "b", "c"]).plan_user_turn(e, state)
 
@@ -53,8 +52,7 @@ class RoundRobinFirstTurn(unittest.TestCase):
     def test_first_post_skips_inactive_in_pick(self):
         # ``a`` is inactive at the first post, so the first speaker
         # picked is ``b`` (still arms round-robin with the full order).
-        state = _state_with(("a", False, True), ("b", True, True),
-                            ("c", True, True))
+        state = _state_with(("a", False, True), ("b", True, True), ("c", True, True))
         e = ev.chat(sender="user", body="kickoff")
         plan = RoundRobinPolicy(["a", "b", "c"]).plan_user_turn(e, state)
         self.assertEqual(plan.required_participants, {"b"})
@@ -64,10 +62,8 @@ class RoundRobinFirstTurn(unittest.TestCase):
 class RoundRobinSubsequent(unittest.TestCase):
     """Mode already armed → use the kernel's rotation pointer."""
 
-    def _armed_state(self, idx: int = 0,
-                     order: list[str] | None = None) -> RoomState:
-        state = _state_with(("a", True, True), ("b", True, True),
-                            ("c", True, True))
+    def _armed_state(self, idx: int = 0, order: list[str] | None = None) -> RoomState:
+        state = _state_with(("a", True, True), ("b", True, True), ("c", True, True))
         # A non-empty turn_order is itself the round-robin mode signal.
         state.control.turn_order = list(order or ["a", "b", "c"])
         state.control.next_speaker_idx = idx
@@ -100,24 +96,24 @@ class RoundRobinSubsequent(unittest.TestCase):
     def test_inactive_skipped_in_rotation(self):
         # turn_order is [a, b, c] but ``b`` went inactive — live order
         # becomes [a, c]. idx=1 mod 2 = 1 → c.
-        state = _state_with(("a", True, True), ("b", False, True),
-                            ("c", True, True))
+        state = _state_with(("a", True, True), ("b", False, True), ("c", True, True))
         state.control.turn_order = ["a", "b", "c"]
         state.control.next_speaker_idx = 1
         plan = RoundRobinPolicy(["a", "b", "c"]).plan_user_turn(
-            ev.chat(sender="user", body="next"), state)
+            ev.chat(sender="user", body="next"), state
+        )
         self.assertEqual(plan.required_participants, {"c"})
 
     def test_all_inactive_returns_no_response(self):
         state = _state_with(("a", False, True), ("b", False, True))
         state.control.turn_order = ["a", "b"]
         plan = RoundRobinPolicy(["a", "b"]).plan_user_turn(
-            ev.chat(sender="user", body="anyone?"), state)
+            ev.chat(sender="user", body="anyone?"), state
+        )
         self.assertFalse(plan.requires_response)
 
 
 class RoundRobinConstruction(unittest.TestCase):
-
     def test_empty_order_rejected(self):
         with self.assertRaises(ValueError):
             RoundRobinPolicy([])
@@ -142,8 +138,7 @@ class RoundRobinConstruction(unittest.TestCase):
 
     def test_first_post_with_no_active_returns_no_response(self):
         state = _state_with(("a", False, True), ("b", False, True))
-        plan = RoundRobinPolicy(["a", "b"]).plan_user_turn(
-            ev.chat(sender="user", body="hi"), state)
+        plan = RoundRobinPolicy(["a", "b"]).plan_user_turn(ev.chat(sender="user", body="hi"), state)
         self.assertFalse(plan.requires_response)
 
     def test_name_attribute(self):

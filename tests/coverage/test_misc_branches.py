@@ -8,6 +8,7 @@ Catches the remaining lines in:
 - ``loom/contracts.py`` (one-line literal)
 - ``loom/runtime.py`` (a few remaining branches)
 """
+
 from __future__ import annotations
 
 
@@ -19,7 +20,9 @@ from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.coordinator import RoomCoordinator
 from loom.kernel.obligations import (
-    ResponseObligation, UserTurnPlan, plan_for_default,
+    ResponseObligation,
+    UserTurnPlan,
+    plan_for_default,
 )
 from loom.kernel.prompt import (
     _FallbackPolicy,
@@ -45,18 +48,23 @@ from loom.room import LoomRoom, _default_prompt, _thread_safe_print
 # streaming.py
 # ---------------------------------------------------------------------------
 
+
 def test_try_cancel_no_cancel_attr_silent():
     """Covers: streaming.py:128-130 — proxy without cancel() returns silently."""
+
     class P:
         pass
+
     _try_cancel(P())  # must not raise
 
 
 def test_try_cancel_cancel_raises_swallowed():
     """Covers: streaming.py:131-134 — exception in cancel() swallowed."""
+
     class P:
         def cancel(self):
             raise RuntimeError("nope")
+
     _try_cancel(P())  # must not raise
 
 
@@ -80,20 +88,19 @@ def test_make_default_draft_handler_runs_via_proxy():
     handler = make_default_draft_handler(proxy_for, builder)
 
     # Open a turn so we have a lease.
-    user_event = ev.chat(
-        sender="user", body="@alice hi",
-        addressees=["alice"], room_epoch=0)
+    user_event = ev.chat(sender="user", body="@alice hi", addressees=["alice"], room_epoch=0)
     coord.post_user_event_and_open_turn(
         user_event,
         lambda e: plan_for_default(
-            "alice", reason="direct_mention",
-            target_event_ids=[e.id], rationale="@alice"),
+            "alice", reason="direct_mention", target_event_ids=[e.id], rationale="@alice"
+        ),
     )
     lease = coord.acquire_lease("alice", user_event.id, is_direct_mention=True)
     assert lease is not None
 
     bus_ref = bus
     coord_ref = coord
+
     class FakeActor:
         id = "alice"
         bus = bus_ref
@@ -106,6 +113,7 @@ def test_make_default_draft_handler_runs_via_proxy():
 # ---------------------------------------------------------------------------
 # policy/default.py — _is_acknowledgement edge case
 # ---------------------------------------------------------------------------
+
 
 def test_is_acknowledgement_empty_text_returns_false():
     """Covers: default.py:139-140 — empty cleaned text returns False."""
@@ -122,8 +130,10 @@ def test_is_acknowledgement_too_many_words_returns_false():
 # policy/default.py — instruction-builder active_goal branches
 # ---------------------------------------------------------------------------
 
+
 class _CtlView:
     """Minimal stand-in for RoomControlStateView."""
+
     def __init__(self, *, active_goal=None):
         self.active_goal = active_goal
 
@@ -154,8 +164,7 @@ def test_instruction_for_round_robin_with_topic():
 
 def test_instruction_for_game_start_with_active_capable():
     """Covers: game-start instruction with topic + active_capable."""
-    out = _instruction_for_game_start(["alice", "bob"],
-                                       _CtlView(), topic="WIN")
+    out = _instruction_for_game_start(["alice", "bob"], _CtlView(), topic="WIN")
     assert "WIN" in out
     assert "alice" in out
 
@@ -169,6 +178,7 @@ def test_instruction_for_game_start_with_no_active_capable():
 # ---------------------------------------------------------------------------
 # kernel/prompt.py — trigger label + fallback policy + role render
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def coord_alice():
@@ -216,8 +226,11 @@ def test_trigger_label_should_obligation(coord_alice):
         allowed_speakers={"alice"},
         obligations=[
             ResponseObligation(
-                id=0, participant_id="alice", level="should",
-                target_event_ids=[0], reason="x",
+                id=0,
+                participant_id="alice",
+                level="should",
+                target_event_ids=[0],
+                reason="x",
             ),
         ],
         routing_case="direct_mention",
@@ -239,8 +252,11 @@ def test_trigger_label_may_obligation_returns_optional(coord_alice):
         allowed_speakers={"alice"},
         obligations=[
             ResponseObligation(
-                id=0, participant_id="alice", level="may",
-                target_event_ids=[0], reason="x",
+                id=0,
+                participant_id="alice",
+                level="may",
+                target_event_ids=[0],
+                reason="x",
             ),
         ],
         routing_case="multi_opinion",
@@ -291,6 +307,7 @@ def test_build_prompt_with_role_renders_role_line(coord_alice):
 # room.py — _thread_safe_print, _default_prompt
 # ---------------------------------------------------------------------------
 
+
 def test_thread_safe_print_emits(capsys):
     """Covers: room.py:77-78 — _thread_safe_print uses module lock + print."""
     _thread_safe_print("hello from room")
@@ -306,10 +323,13 @@ def test_default_prompt_calls_input(monkeypatch):
 
 def test_post_and_wait_filters_non_main_channel():
     """Covers: room.py:304-305 — channel filter drops non-main events."""
+
     class _Agent:
         id = "alice"
+
         def send(self, prompt):
             return "hi"
+
     room = LoomRoom([agent_from_send(_Agent.id, _Agent().send)])
     try:
         room.start()
@@ -319,6 +339,7 @@ def test_post_and_wait_filters_non_main_channel():
         # Replies may be empty (timeout) but the function returned cleanly,
         # exercising the channel-filter branch.
         from loom import TurnResult
+
         assert isinstance(replies, TurnResult)
     finally:
         room.stop()
@@ -328,10 +349,13 @@ def test_post_and_wait_filters_non_main_channel():
 # contracts.py — single uncovered line
 # ---------------------------------------------------------------------------
 
+
 def test_conversation_policy_role_prompt_default():
     """Covers: contracts.py:60 — default ConversationPolicy.role_prompt = ''."""
+
     class MinimalPolicy(ConversationPolicy):
         name = "minimal"
+
         def plan_user_turn(self, user_event, state, *, prior_speaker=None):
             raise NotImplementedError
 
@@ -346,11 +370,14 @@ def test_conversation_policy_role_prompt_default():
 # runtime.py — final small branches
 # ---------------------------------------------------------------------------
 
+
 def test_runtime_remove_swallows_keyerror():
     """Covers: runtime.py:419-420 — /remove KeyError caught."""
     from loom.policy.open_chat import OpenChatPolicy
     from loom.runtime import (
-        ParticipantWiring, SendProxyAdapter, build_loom_session,
+        ParticipantWiring,
+        SendProxyAdapter,
+        build_loom_session,
         handle_slash_command,
     )
 
@@ -364,8 +391,10 @@ def test_runtime_remove_swallows_keyerror():
         # Force the underlying session.remove_agent to raise KeyError by
         # de-syncing the participants dict.
         original = session.remove_agent
+
         def raising_remove(pid, **k):
             raise KeyError(f"forced: {pid}")
+
         session.remove_agent = raising_remove  # type: ignore[method-assign]
         r = handle_slash_command("/remove alice", session)
         assert "forced:" in r.message
@@ -378,7 +407,9 @@ def test_runtime_summary_with_summary_returns_body():
     """Covers: runtime.py:456 — /summary returns the latest summary body."""
     from loom.policy.open_chat import OpenChatPolicy
     from loom.runtime import (
-        ParticipantWiring, SendProxyAdapter, build_loom_session,
+        ParticipantWiring,
+        SendProxyAdapter,
+        build_loom_session,
         handle_slash_command,
     )
 
@@ -401,7 +432,9 @@ def test_runtime_roles_full_pretty_message():
     """Covers: runtime.py:503-506 — /roles full pretty message."""
     from loom.policy.open_chat import OpenChatPolicy
     from loom.runtime import (
-        ParticipantWiring, SendProxyAdapter, build_loom_session,
+        ParticipantWiring,
+        SendProxyAdapter,
+        build_loom_session,
         handle_slash_command,
     )
 
@@ -435,8 +468,7 @@ def test_resolve_default_summarizer_returns_set_id():
 def test_resolve_default_summarizer_falls_back_when_inactive():
     """Covers: kernel/room.py:269 — falls back when summarizer inactive."""
     state = RoomState(config=RoomConfig())
-    state.add_participant(ParticipantInfo(
-        id="alice", capable=True, cost_tier=1, active=False))
+    state.add_participant(ParticipantInfo(id="alice", capable=True, cost_tier=1, active=False))
     state.add_participant(ParticipantInfo(id="bob", capable=True, cost_tier=2))
     state.set_default_summarizer("alice")
     # alice inactive → falls back to cheapest_active_capable() → bob
@@ -446,6 +478,7 @@ def test_resolve_default_summarizer_falls_back_when_inactive():
 def test_default_policy_vocative_with_no_eligible_aliases():
     """Covers: default.py:172-173 — vocative with empty aliases pool."""
     from loom.policy.default import _detect_vocative
+
     # Single participant matching the exclude → empty pool → no aliases.
     assert _detect_vocative("hi alice", ["alice"], exclude="alice") == []
 
@@ -453,6 +486,7 @@ def test_default_policy_vocative_with_no_eligible_aliases():
 def test_default_policy_vocative_with_only_punctuation():
     """Covers: default.py:175-176 — text becomes empty after stripping punct."""
     from loom.policy.default import _detect_vocative
+
     assert _detect_vocative("?!.!!", ["alice", "bob"]) == []
 
 
@@ -463,6 +497,7 @@ def test_build_prompt_with_policy_system_prompt_appended():
     class CustomPolicy:
         def system_prompt(self, actor_id, state):
             return "POLICY-SYSTEM-EXTRA-RULE"
+
         def role_prompt(self, actor_id, state):
             return ""
 
@@ -470,8 +505,7 @@ def test_build_prompt_with_policy_system_prompt_appended():
     state = RoomState(config=RoomConfig())
     state.add_participant(ParticipantInfo(id="alice", capable=True, cost_tier=1))
     coord = RoomCoordinator(bus, state)
-    out = build_prompt("alice", trigger_event=None, coordinator=coord,
-                       policy=CustomPolicy())
+    out = build_prompt("alice", trigger_event=None, coordinator=coord, policy=CustomPolicy())
     assert "POLICY-SYSTEM-EXTRA-RULE" in out
     bus.stop()
 
@@ -480,11 +514,15 @@ def test_actor_skip_returns_when_chat_not_addressing_actor():
     """Covers: actor.py:183-187 — SKIP path with not_eligible reason."""
     from loom.policy.open_chat import OpenChatPolicy
     from loom.runtime import (
-        ParticipantWiring, SendProxyAdapter, build_loom_session,
+        ParticipantWiring,
+        SendProxyAdapter,
+        build_loom_session,
     )
+
     class P:
         def send(self, prompt):
             return "hi"
+
     wirings = [
         ParticipantWiring(id="alice", proxy=SendProxyAdapter(P())),
         ParticipantWiring(id="bob", proxy=SendProxyAdapter(P())),
@@ -494,8 +532,8 @@ def test_actor_skip_returns_when_chat_not_addressing_actor():
         alice = next(a for a in session.actors if a.id == "alice")
         # Post a chat from bob NOT addressing alice → no obligation, not eligible.
         from loom.kernel import events as evx
-        session.bus.post(evx.chat(sender="bob", body="just thinking",
-                                   addressees=[]))
+
+        session.bus.post(evx.chat(sender="bob", body="just thinking", addressees=[]))
         decision = alice._decide_once()
         assert decision.action == "SKIP"
     finally:
@@ -506,7 +544,9 @@ def test_runtime_roles_clear_via_slash():
     """Covers: runtime.py:502-503 — /roles assigns then clears."""
     from loom.policy.open_chat import OpenChatPolicy
     from loom.runtime import (
-        ParticipantWiring, SendProxyAdapter, build_loom_session,
+        ParticipantWiring,
+        SendProxyAdapter,
+        build_loom_session,
         handle_slash_command,
     )
 

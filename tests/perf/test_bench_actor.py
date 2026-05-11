@@ -4,6 +4,7 @@ Currently :meth:`ParticipantActor._lookup_event` does ``bus.snapshot()``
 + linear scan to fetch a single event by id — Phase 1.2 replaces this
 with O(1) ``bus.get(id)``.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -37,5 +38,4 @@ def test_lookup_event_via_snapshot(bench, size):
                 return e
         return None
 
-    bench(fetch, name=f"actor._lookup_event-style E={size}",
-          iters=200, inner=10)
+    bench(fetch, name=f"actor._lookup_event-style E={size}", iters=200, inner=10)

@@ -54,6 +54,7 @@ This policy reads :class:`RoomState` and never mutates it. Mode flips
 and rotation order propagate to the coordinator via UserTurnPlan
 fields — declarative, the kernel applies them.
 """
+
 from __future__ import annotations
 
 import re
@@ -92,19 +93,54 @@ Anchor / default-responder role:
 # Acknowledgement set — compared after lowercasing + stripping. Phrases
 # longer than three words are excluded automatically by the word-count
 # guard in ``_is_acknowledgement``.
-_ACK_PHRASES: frozenset[str] = frozenset({
-    "ok", "okay", "k", "kk",
-    "thanks", "thank you", "thx", "ty",
-    "got it", "cool", "nice", "noted",
-    "sounds good", "sgtg",
-})
+_ACK_PHRASES: frozenset[str] = frozenset(
+    {
+        "ok",
+        "okay",
+        "k",
+        "kk",
+        "thanks",
+        "thank you",
+        "thx",
+        "ty",
+        "got it",
+        "cool",
+        "nice",
+        "noted",
+        "sounds good",
+        "sgtg",
+    }
+)
 
 # Words that look like names but are too generic to be reliable vocatives.
-_VOCATIVE_BLACKLIST: frozenset[str] = frozenset({
-    "you", "i", "me", "we", "us", "they", "them", "all", "guys", "yall",
-    "everyone", "everybody", "anyone", "anybody", "someone", "team",
-    "folks", "ai", "bot", "model", "user", "assistant", "agent", "llm",
-})
+_VOCATIVE_BLACKLIST: frozenset[str] = frozenset(
+    {
+        "you",
+        "i",
+        "me",
+        "we",
+        "us",
+        "they",
+        "them",
+        "all",
+        "guys",
+        "yall",
+        "everyone",
+        "everybody",
+        "anyone",
+        "anybody",
+        "someone",
+        "team",
+        "folks",
+        "ai",
+        "bot",
+        "model",
+        "user",
+        "assistant",
+        "agent",
+        "llm",
+    }
+)
 
 _VOC_START_RE = re.compile(r"^([A-Za-z][\w-]{1,32})\s*[,:]\s")
 _VOC_END_RE = re.compile(r"(?:^|[,\s])([A-Za-z][\w-]{1,32})\s*$")
@@ -135,6 +171,7 @@ _GAME_END_RE = re.compile(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_acknowledgement(text: str) -> bool:
     cleaned = text.strip().lower()
     if not cleaned:
@@ -153,8 +190,7 @@ def _aliases_for(participant_ids: list[str]) -> dict[str, str]:
         if len(lower) >= 2 and lower not in _VOCATIVE_BLACKLIST:
             aliases.setdefault(lower, pid)
         head = pid.split("_", 1)[0].lower()
-        if (head and head != lower and len(head) >= 3
-                and head not in _VOCATIVE_BLACKLIST):
+        if head and head != lower and len(head) >= 3 and head not in _VOCATIVE_BLACKLIST:
             aliases.setdefault(head, pid)
     return aliases
 
@@ -196,24 +232,21 @@ def _detect_vocative(
     return matched
 
 
-def _instruction_for_directed(addressed: list[str],
-                              control: RoomControlStateView,
-                              topic: Optional[str] = None) -> str:
+def _instruction_for_directed(
+    addressed: list[str], control: RoomControlStateView, topic: Optional[str] = None
+) -> str:
     del control  # signature stability; topic now lives on state
     parts: list[str] = []
     if len(addressed) == 1:
-        parts.append(
-            f"Respond directly — you ({addressed[0]}) were addressed.")
+        parts.append(f"Respond directly — you ({addressed[0]}) were addressed.")
     else:
-        parts.append(
-            "Respond directly — you were one of the addressed participants.")
+        parts.append("Respond directly — you were one of the addressed participants.")
     if topic:
         parts.append(f"Topic: {topic}")
     return " ".join(parts)
 
 
-def _instruction_for_broadcast(control: RoomControlStateView,
-                               topic: Optional[str] = None) -> str:
+def _instruction_for_broadcast(control: RoomControlStateView, topic: Optional[str] = None) -> str:
     del control
     parts = ["Open group chat. Reply with substance or [PASS]."]
     if topic:
@@ -221,9 +254,9 @@ def _instruction_for_broadcast(control: RoomControlStateView,
     return " ".join(parts)
 
 
-def _instruction_for_round_robin(speaker: str,
-                                 control: RoomControlStateView,
-                                 topic: Optional[str] = None) -> str:
+def _instruction_for_round_robin(
+    speaker: str, control: RoomControlStateView, topic: Optional[str] = None
+) -> str:
     del control
     parts = [
         f"Round-robin mode: you ({speaker}) are up this turn. "
@@ -235,9 +268,9 @@ def _instruction_for_round_robin(speaker: str,
     return " ".join(parts)
 
 
-def _instruction_for_game_start(active_capable: list[str],
-                                control: RoomControlStateView,
-                                topic: Optional[str] = None) -> str:
+def _instruction_for_game_start(
+    active_capable: list[str], control: RoomControlStateView, topic: Optional[str] = None
+) -> str:
     del control
     others = ", ".join(active_capable) if active_capable else "the room"
     parts = [
@@ -265,6 +298,7 @@ def _pick_rotation_speaker(
 # DefaultPolicy
 # ---------------------------------------------------------------------------
 
+
 class DefaultPolicy(ConversationPolicy):
     """Deterministic floor-aware default policy (v0.0 behavior).
 
@@ -288,12 +322,9 @@ class DefaultPolicy(ConversationPolicy):
         state: RoomStateView,
     ) -> obl.UserTurnPlan:
         text = user_event.body if isinstance(user_event.body, str) else ""
-        target_event_ids = (
-            [user_event.id] if user_event.id is not None else []
-        )
+        target_event_ids = [user_event.id] if user_event.id is not None else []
         active_capable = sorted(
-            pid for pid, info in state.participants.items()
-            if info.active and info.capable
+            pid for pid, info in state.participants.items() if info.active and info.capable
         )
         control = state.control
 
@@ -303,7 +334,6 @@ class DefaultPolicy(ConversationPolicy):
         # Path A — Round-robin mode active (turn_order non-empty).
         # ==============================================================
         if control.turn_order:
-
             # R1: Game-end phrase — exit the mode and skip the turn.
             if _GAME_END_RE.search(text):
                 plan = obl.plan_for_acknowledgement(
@@ -316,15 +346,13 @@ class DefaultPolicy(ConversationPolicy):
             # R2: Direct @-mention — same plan shape as broadcast Case 1
             # but rotation pointer is preserved.
             if mentioned:
-                case: RoutingCase = ("multi_opinion" if len(mentioned) >= 2
-                                     else "direct_mention")
+                case: RoutingCase = "multi_opinion" if len(mentioned) >= 2 else "direct_mention"
                 return obl.plan_with_required(
                     mentioned,
                     routing_case=case,
                     target_event_ids=target_event_ids,
                     reason=case,
-                    rationale=(f"@-mentioned (round-robin): "
-                               f"{', '.join(mentioned)}"),
+                    rationale=(f"@-mentioned (round-robin): {', '.join(mentioned)}"),
                     allowed_speakers=set(mentioned),
                     max_responses=len(mentioned),
                     wait_for_user_after=True,
@@ -342,16 +370,14 @@ class DefaultPolicy(ConversationPolicy):
             # R4: Vocative — same as direct mention.
             vocative = _detect_vocative(text, active_capable, exclude="user")
             if vocative:
-                case = ("multi_opinion" if len(vocative) >= 2
-                        else "direct_mention")
+                case = "multi_opinion" if len(vocative) >= 2 else "direct_mention"
                 case = cast(RoutingCase, case)
                 return obl.plan_with_required(
                     vocative,
                     routing_case=case,
                     target_event_ids=target_event_ids,
                     reason="vocative",
-                    rationale=(f"vocative (round-robin): "
-                               f"{', '.join(vocative)}"),
+                    rationale=(f"vocative (round-robin): {', '.join(vocative)}"),
                     allowed_speakers=set(vocative),
                     max_responses=len(vocative),
                     wait_for_user_after=True,
@@ -367,8 +393,7 @@ class DefaultPolicy(ConversationPolicy):
                     routing_case="direct_mention",
                     target_event_ids=target_event_ids,
                     reason="round_robin",
-                    rationale=(f"round-robin: {speaker} "
-                               f"(idx {control.next_speaker_idx})"),
+                    rationale=(f"round-robin: {speaker} (idx {control.next_speaker_idx})"),
                     allowed_speakers={speaker},
                     max_responses=1,
                     wait_for_user_after=True,
@@ -383,8 +408,7 @@ class DefaultPolicy(ConversationPolicy):
 
         # Case 1: Direct @-mention overrides everything else.
         if mentioned:
-            case = ("multi_opinion" if len(mentioned) >= 2
-                    else "direct_mention")
+            case = "multi_opinion" if len(mentioned) >= 2 else "direct_mention"
             case = cast(RoutingCase, case)
             return obl.plan_with_required(
                 mentioned,
@@ -408,8 +432,7 @@ class DefaultPolicy(ConversationPolicy):
         # Case 3: Vocative addressing.
         vocative = _detect_vocative(text, active_capable, exclude="user")
         if vocative:
-            case = ("multi_opinion" if len(vocative) >= 2
-                    else "direct_mention")
+            case = "multi_opinion" if len(vocative) >= 2 else "direct_mention"
             case = cast(RoutingCase, case)
             return obl.plan_with_required(
                 vocative,
@@ -437,8 +460,7 @@ class DefaultPolicy(ConversationPolicy):
                 routing_case="multi_opinion",
                 target_event_ids=target_event_ids,
                 reason="game_start",
-                rationale=(f"game-start detected; round-robin enabled "
-                           f"with order {order}"),
+                rationale=(f"game-start detected; round-robin enabled with order {order}"),
                 confidence=0.95,
                 allowed_speakers=set(active_capable),
                 max_responses=len(active_capable),
@@ -454,8 +476,7 @@ class DefaultPolicy(ConversationPolicy):
                 routing_case="multi_opinion",
                 target_event_ids=target_event_ids,
                 reason="broadcast",
-                rationale=(f"broadcast to all {len(active_capable)} "
-                           "active participants"),
+                rationale=(f"broadcast to all {len(active_capable)} active participants"),
                 confidence=0.9,
                 allowed_speakers=set(active_capable),
                 max_responses=len(active_capable),
@@ -471,15 +492,13 @@ class DefaultPolicy(ConversationPolicy):
             rationale="no active capable participants",
         )
 
-    def role_prompt(self, participant_id: str,
-                    state: RoomStateView) -> str:
+    def role_prompt(self, participant_id: str, state: RoomStateView) -> str:
         """Return ANCHOR_SYNTHESIS_INSTRUCTIONS to the anchor / default responder.
 
         Same condition as v0.0: the prompt addendum applies to the
         participant occupying the anchor or default-responder slot.
         """
-        anchor_roles = {pid for pid in (state.anchor_id,
-                                        state.default_responder_id) if pid}
+        anchor_roles = {pid for pid in (state.anchor_id, state.default_responder_id) if pid}
         if participant_id in anchor_roles:
             return ANCHOR_SYNTHESIS_INSTRUCTIONS
         return ""

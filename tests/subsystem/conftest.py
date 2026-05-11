@@ -32,6 +32,7 @@ All tests in ``tests/subsystem/`` run by default. The ``stress``,
 ``timing``, ``disk``, and ``breakpoint`` markers are informational
 labels for filtering, not skip filters.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,22 +58,19 @@ from loom.room import LoomRoom
 # Marker registration — labels, not skip-by-default gates.
 # ---------------------------------------------------------------------------
 
+
 def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "stress: heavier workload; bounded by the 45s watchdog")
     config.addinivalue_line(
-        "markers",
-        "stress: heavier workload; bounded by the 45s watchdog")
+        "markers", "timing: timing-sensitive; uses real wall-clock — generous margins"
+    )
+    config.addinivalue_line("markers", "disk: touches the filesystem (always via tmp_path)")
     config.addinivalue_line(
-        "markers",
-        "timing: timing-sensitive; uses real wall-clock — generous margins")
+        "markers", "breakpoint: probes the threshold at which behavior degrades"
+    )
     config.addinivalue_line(
-        "markers",
-        "disk: touches the filesystem (always via tmp_path)")
-    config.addinivalue_line(
-        "markers",
-        "breakpoint: probes the threshold at which behavior degrades")
-    config.addinivalue_line(
-        "markers",
-        "watchdog(seconds): override the default 45s watchdog ceiling")
+        "markers", "watchdog(seconds): override the default 45s watchdog ceiling"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +85,11 @@ class _WatchdogFired(Exception):
 
 
 def _signal_alarm_available() -> bool:
-    return hasattr(signal, "SIGALRM") and hasattr(signal, "alarm") \
+    return (
+        hasattr(signal, "SIGALRM")
+        and hasattr(signal, "alarm")
         and threading.current_thread() is threading.main_thread()
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -108,8 +109,7 @@ def watchdog_timer(request: pytest.FixtureRequest):
         prev_handler = signal.getsignal(signal.SIGALRM)
 
         def _handler(signum, frame):  # noqa: ARG001
-            raise _WatchdogFired(
-                f"watchdog fired after {seconds}s in {request.node.nodeid}")
+            raise _WatchdogFired(f"watchdog fired after {seconds}s in {request.node.nodeid}")
 
         signal.signal(signal.SIGALRM, _handler)
         signal.alarm(seconds)
@@ -128,11 +128,12 @@ def watchdog_timer(request: pytest.FixtureRequest):
         # Best-effort interrupt — works on cpython main thread.
         try:
             import ctypes  # noqa: PLC0415
+
             tid = threading.main_thread().ident
             if tid is not None:
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_long(tid),
-                    ctypes.py_object(_WatchdogFired))
+                    ctypes.c_long(tid), ctypes.py_object(_WatchdogFired)
+                )
         except Exception:  # pragma: no cover
             pass
 
@@ -144,17 +145,18 @@ def watchdog_timer(request: pytest.FixtureRequest):
     finally:
         timer.cancel()
         if fired.is_set():
-            pytest.fail(f"watchdog fired after {seconds}s "
-                        f"in {request.node.nodeid}")
+            pytest.fail(f"watchdog fired after {seconds}s in {request.node.nodeid}")
 
 
 # ---------------------------------------------------------------------------
 # Actor-thread leak guard — autouse.
 # ---------------------------------------------------------------------------
 
+
 def _actor_thread_names() -> set[str]:
-    return {t.name for t in threading.enumerate()
-            if t.name.startswith("loom-actor-") and t.is_alive()}
+    return {
+        t.name for t in threading.enumerate() if t.name.startswith("loom-actor-") and t.is_alive()
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -175,14 +177,13 @@ def assert_no_thread_leak(request: pytest.FixtureRequest):
         time.sleep(0.05)
     leaked = _actor_thread_names() - before
     if leaked:
-        pytest.fail(
-            f"actor threads leaked from {request.node.nodeid}: "
-            f"{sorted(leaked)}")
+        pytest.fail(f"actor threads leaked from {request.node.nodeid}: {sorted(leaked)}")
 
 
 # ---------------------------------------------------------------------------
 # Thread harness — spawn + join with exception capture.
 # ---------------------------------------------------------------------------
+
 
 class _ThreadHarness:
     def __init__(self) -> None:
@@ -190,8 +191,7 @@ class _ThreadHarness:
         self._errors: list[BaseException] = []
         self._lock = threading.Lock()
 
-    def spawn(self, target: Callable[[], Any], *,
-              name: Optional[str] = None) -> threading.Thread:
+    def spawn(self, target: Callable[[], Any], *, name: Optional[str] = None) -> threading.Thread:
         def _runner():
             try:
                 target()
@@ -234,6 +234,7 @@ def thread_harness():
 # Journal fixtures.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def temp_journal(tmp_path):
     """Yield a fresh ``Journal`` rooted at ``tmp_path/journal``.
@@ -256,9 +257,7 @@ def temp_journal(tmp_path):
                 try:
                     json.loads(line)
                 except json.JSONDecodeError as exc:
-                    pytest.fail(
-                        f"journal contains malformed line: {line!r} "
-                        f"({exc})")
+                    pytest.fail(f"journal contains malformed line: {line!r} ({exc})")
 
 
 class InMemoryFaultJournal(Journal):
@@ -302,6 +301,7 @@ class InMemoryFaultJournal(Journal):
 # Adversarial agent factory.
 # ---------------------------------------------------------------------------
 
+
 class _AdversarialAgentFactory:
     """Build agents with various hostile shapes for stress tests.
 
@@ -311,9 +311,11 @@ class _AdversarialAgentFactory:
     """
 
     @staticmethod
-    def hang_after_first_delta(agent_id: str, *, hang_seconds: float = 5.0,
-                               first_chunk: str = "first delta"):
+    def hang_after_first_delta(
+        agent_id: str, *, hang_seconds: float = 5.0, first_chunk: str = "first delta"
+    ):
         """Yield one delta, then sleep for ``hang_seconds``."""
+
         def gen(_p):
             yield first_chunk
             time.sleep(hang_seconds)
@@ -322,9 +324,11 @@ class _AdversarialAgentFactory:
         return agent_from_stream(agent_id, gen)
 
     @staticmethod
-    def slow_first_delta(agent_id: str, *, seconds: float = 5.0,
-                         delta: str = "delayed first delta"):
+    def slow_first_delta(
+        agent_id: str, *, seconds: float = 5.0, delta: str = "delayed first delta"
+    ):
         """Sleep, then yield a single delta."""
+
         def gen(_p):
             time.sleep(seconds)
             yield delta
@@ -332,9 +336,9 @@ class _AdversarialAgentFactory:
         return agent_from_stream(agent_id, gen)
 
     @staticmethod
-    def infinite_stream(agent_id: str, *, cap_chunks: int = 10000,
-                        chunk: str = "x"):
+    def infinite_stream(agent_id: str, *, cap_chunks: int = 10000, chunk: str = "x"):
         """Yield ``chunk`` up to ``cap_chunks`` times — always bounded."""
+
         def gen(_p):
             for _ in range(cap_chunks):
                 yield chunk
@@ -342,9 +346,9 @@ class _AdversarialAgentFactory:
         return agent_from_stream(agent_id, gen)
 
     @staticmethod
-    def garbage_payload(agent_id: str, *,
-                        payload: str = "\x00\x01\x02 � binary noise"):
+    def garbage_payload(agent_id: str, *, payload: str = "\x00\x01\x02 � binary noise"):
         """Yield non-printable / encoding-edge chunks."""
+
         def gen(_p):
             yield payload
 
@@ -353,6 +357,7 @@ class _AdversarialAgentFactory:
     @staticmethod
     def yields_none(agent_id: str):
         """Yield ``None`` chunks — adapter must filter them."""
+
         def gen(_p):
             yield None
             yield "real content sufficient to bypass loop guard length"
@@ -361,10 +366,15 @@ class _AdversarialAgentFactory:
         return agent_from_stream(agent_id, gen)
 
     @staticmethod
-    def raises_after_chunks(agent_id: str, *, n: int = 1,
-                            exc: type[BaseException] = RuntimeError,
-                            message: str = "adversarial raise"):
+    def raises_after_chunks(
+        agent_id: str,
+        *,
+        n: int = 1,
+        exc: type[BaseException] = RuntimeError,
+        message: str = "adversarial raise",
+    ):
         """Yield ``n`` chunks then raise ``exc(message)``."""
+
         def gen(_p):
             for i in range(n):
                 yield f"chunk {i} long enough so far for the buffer to flush "
@@ -373,9 +383,9 @@ class _AdversarialAgentFactory:
         return agent_from_stream(agent_id, gen)
 
     @staticmethod
-    def flood_chunks(agent_id: str, *, n_chunks: int = 1000,
-                     chunk: str = "flood "):
+    def flood_chunks(agent_id: str, *, n_chunks: int = 1000, chunk: str = "flood "):
         """Yield ``n_chunks`` small chunks in rapid succession."""
+
         def gen(_p):
             for _ in range(n_chunks):
                 yield chunk
@@ -392,6 +402,7 @@ def adversarial_agent():
 # Room factory.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def room_factory():
     """Build an ``LoomRoom`` with the requested configuration.
@@ -401,11 +412,17 @@ def room_factory():
     """
     rooms: list[LoomRoom] = []
 
-    def _build(*, agents: Iterable, policy=None, topic: Optional[str] = None,
-               journal_dir: Optional[Path] = None, anchor_id: Optional[str] = None,
-               default_responder_id: Optional[str] = None,
-               policy_error_mode: str = "close_turn",
-               room_config=None) -> LoomRoom:
+    def _build(
+        *,
+        agents: Iterable,
+        policy=None,
+        topic: Optional[str] = None,
+        journal_dir: Optional[Path] = None,
+        anchor_id: Optional[str] = None,
+        default_responder_id: Optional[str] = None,
+        policy_error_mode: str = "close_turn",
+        room_config=None,
+    ) -> LoomRoom:
         kwargs = {
             "agents": list(agents),
             "topic": topic,
@@ -436,6 +453,7 @@ def room_factory():
 # ---------------------------------------------------------------------------
 # Bus recorder.
 # ---------------------------------------------------------------------------
+
 
 class _BusRecorder:
     def __init__(self) -> None:
@@ -487,6 +505,7 @@ def bus_recorder():
 # Throwing-policy factory.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def policy_throwing():
     """Build a policy that raises on the Nth ``plan_user_turn`` call.
@@ -494,9 +513,12 @@ def policy_throwing():
     Subsequent calls return an acknowledgement plan.
     """
 
-    def _build(*, raise_on_call: int = 1,
-               exc: type[BaseException] = RuntimeError,
-               message: str = "policy throwing fixture"):
+    def _build(
+        *,
+        raise_on_call: int = 1,
+        exc: type[BaseException] = RuntimeError,
+        message: str = "policy throwing fixture",
+    ):
 
         class _Throwing(ConversationPolicy):
             name = "throwing"
@@ -518,6 +540,7 @@ def policy_throwing():
 # ---------------------------------------------------------------------------
 # Fake clock — opt-in.
 # ---------------------------------------------------------------------------
+
 
 class _FakeClock:
     def __init__(self, start: float = 1_000_000.0) -> None:
@@ -546,6 +569,7 @@ def fake_clock(monkeypatch):
 # Convenience: simple agent pool builders.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def simple_agents():
     """Factory for N healthy agents with a long-enough varying reply.
@@ -555,22 +579,26 @@ def simple_agents():
     across consecutive turns.
     """
 
-    def _build(n: int, *, prefix: str = "agent",
-               base: str = ("agent {i} reply that is sufficiently long to "
-                            "exceed both the pass buffer and the loop "
-                            "guard short-text threshold for canonical "
-                            "commit. Counter: {c}.")):
+    def _build(
+        n: int,
+        *,
+        prefix: str = "agent",
+        base: str = (
+            "agent {i} reply that is sufficiently long to "
+            "exceed both the pass buffer and the loop "
+            "guard short-text threshold for canonical "
+            "commit. Counter: {c}."
+        ),
+    ):
         counter = [0]
 
         def _make(i: int):
             def _send(prompt):
                 counter[0] += 1
                 return base.format(i=i, c=counter[0])
+
             return _send
 
-        return [
-            agent_from_send(f"{prefix}{i}", _make(i))
-            for i in range(n)
-        ]
+        return [agent_from_send(f"{prefix}{i}", _make(i)) for i in range(n)]
 
     return _build

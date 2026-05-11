@@ -17,6 +17,7 @@ on the :class:`UserTurnPlan`). It does NOT touch :class:`RoomState` or
 the bus directly — the kernel applies the requested transitions when
 opening / closing the turn.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -47,8 +48,7 @@ class RoundRobinPolicy(ConversationPolicy):
         self._order: list[str] = []
         for pid in order:
             if not isinstance(pid, str) or not pid:
-                raise ValueError(
-                    "RoundRobinPolicy order ids must be non-empty strings")
+                raise ValueError("RoundRobinPolicy order ids must be non-empty strings")
             if pid not in seen:
                 seen.add(pid)
                 self._order.append(pid)
@@ -62,12 +62,9 @@ class RoundRobinPolicy(ConversationPolicy):
         user_event: Event,
         state: RoomStateView,
     ) -> obl.UserTurnPlan:
-        target_event_ids = (
-            [user_event.id] if user_event.id is not None else []
-        )
+        target_event_ids = [user_event.id] if user_event.id is not None else []
         active_capable = {
-            pid for pid, info in state.participants.items()
-            if info.active and info.capable
+            pid for pid, info in state.participants.items() if info.active and info.capable
         }
         control = state.control
 
@@ -78,8 +75,7 @@ class RoundRobinPolicy(ConversationPolicy):
             if speaker is None:
                 return obl.plan_for_acknowledgement(
                     target_event_ids=target_event_ids,
-                    rationale=("round-robin start: no configured "
-                               "participants are active+capable"),
+                    rationale=("round-robin start: no configured participants are active+capable"),
                 )
             return obl.plan_with_required(
                 [speaker],
@@ -101,16 +97,14 @@ class RoundRobinPolicy(ConversationPolicy):
         if speaker is None:
             return obl.plan_for_acknowledgement(
                 target_event_ids=target_event_ids,
-                rationale=("round-robin: no live participants in "
-                           "rotation order"),
+                rationale=("round-robin: no live participants in rotation order"),
             )
         return obl.plan_with_required(
             [speaker],
             routing_case="direct_mention",
             target_event_ids=target_event_ids,
             reason="round_robin",
-            rationale=(f"round-robin: {speaker} "
-                       f"(idx {control.next_speaker_idx})"),
+            rationale=(f"round-robin: {speaker} (idx {control.next_speaker_idx})"),
             allowed_speakers={speaker},
             max_responses=1,
             wait_for_user_after=True,
@@ -119,9 +113,7 @@ class RoundRobinPolicy(ConversationPolicy):
         )
 
     @staticmethod
-    def _first_live(
-        order: list[str], active_capable: set[str]
-    ) -> Optional[str]:
+    def _first_live(order: list[str], active_capable: set[str]) -> Optional[str]:
         for pid in order:
             if pid in active_capable:
                 return pid
@@ -139,6 +131,8 @@ class RoundRobinPolicy(ConversationPolicy):
 
     @staticmethod
     def _instruction(speaker: str) -> str:
-        return (f"Round-robin mode: you ({speaker}) are up this turn. "
-                "Other agents are silent until the next user post. "
-                "Make one move, then stop.")
+        return (
+            f"Round-robin mode: you ({speaker}) are up this turn. "
+            "Other agents are silent until the next user post. "
+            "Make one move, then stop."
+        )

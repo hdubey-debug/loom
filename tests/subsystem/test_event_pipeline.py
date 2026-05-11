@@ -12,6 +12,7 @@ This file exercises the event pipeline end-to-end:
 Markers (``stress``, ``disk``, ``breakpoint``) are informational labels;
 all tests run by default. The 45 s autouse watchdog caps every test.
 """
+
 from __future__ import annotations
 
 import time
@@ -36,17 +37,19 @@ from loom.kernel.room import (
 # Bus ordering invariants under concurrent load.
 # ---------------------------------------------------------------------------
 
+
 class TestBusOrderingUnderLoad:
     """The bus assigns monotonic ids and never drops events under load."""
 
-    def test_2000_events_50_subscribers_strict_monotonic_ids(
-            self, thread_harness):
+    def test_2000_events_50_subscribers_strict_monotonic_ids(self, thread_harness):
         bus = MessageBus()
         records: list[list[int]] = [[] for _ in range(50)]
 
         for i in range(50):
+
             def sub(event, idx=i):
                 records[idx].append(event.id)
+
             bus.subscribe(sub)
 
         n_posters = 8
@@ -79,12 +82,10 @@ class TestBusOrderingUnderLoad:
 
         def poster(pid):
             for j in range(per_poster):
-                bus.post(ev.chat(sender=f"agent{pid}", body=f"m{j}",
-                                 meta={"pid": pid, "seq": j}))
+                bus.post(ev.chat(sender=f"agent{pid}", body=f"m{j}", meta={"pid": pid, "seq": j}))
 
         for pid in range(n_posters):
-            thread_harness.spawn(lambda p=pid: poster(p),
-                                  name=f"post{pid}")
+            thread_harness.spawn(lambda p=pid: poster(p), name=f"post{pid}")
         thread_harness.join_all(timeout=10.0)
 
         snap = bus.snapshot(kinds=["chat"])
@@ -96,13 +97,10 @@ class TestBusOrderingUnderLoad:
             assert key not in seen, f"duplicate event for {key}"
             seen.add(key)
         # And every expected pair is present.
-        expected = {(p, j)
-                    for p in range(n_posters)
-                    for j in range(per_poster)}
+        expected = {(p, j) for p in range(n_posters) for j in range(per_poster)}
         assert seen == expected
 
-    def test_subscribe_unsubscribe_during_post_no_lost_events(
-            self, thread_harness):
+    def test_subscribe_unsubscribe_during_post_no_lost_events(self, thread_harness):
         # While posters churn, a controller subscribes / unsubscribes a
         # short-lived listener. The bus must remain consistent: the
         # listener sees a contiguous slice of events, and the bus log is
@@ -134,6 +132,7 @@ class TestBusOrderingUnderLoad:
 # ---------------------------------------------------------------------------
 # Subscriber backpressure.
 # ---------------------------------------------------------------------------
+
 
 class TestBusBackpressure:
     """Slow subscribers must not block the bus post path indefinitely.
@@ -195,12 +194,14 @@ class TestBusBackpressure:
         print(f"BREAKPOINT: subscribers_at_50ms_p99={breakpoint_n}")
         assert breakpoint_n >= floor, (
             f"p99 latency exceeded 50ms at only {breakpoint_n} "
-            f"subscribers — system broke earlier than the sanity floor")
+            f"subscribers — system broke earlier than the sanity floor"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Journal under pressure (disk path).
 # ---------------------------------------------------------------------------
+
 
 class TestJournalUnderPressure:
     """Journal correctness under large payloads, write failures, and rotation."""
@@ -250,11 +251,11 @@ class TestJournalUnderPressure:
             size *= 2
         print(f"BREAKPOINT: serialize_size_at_500ms_kb={breakpoint_kb}")
         assert breakpoint_kb >= floor_kb, (
-            f"serialize broke at only {breakpoint_kb} KB — below sanity floor")
+            f"serialize broke at only {breakpoint_kb} KB — below sanity floor"
+        )
 
     @pytest.mark.disk
-    def test_journal_write_failure_emits_journal_error_and_marks_degraded(
-            self, tmp_path):
+    def test_journal_write_failure_emits_journal_error_and_marks_degraded(self, tmp_path):
         # The journal subscribes to the bus; a write failure must mark
         # ``degraded=True`` and post a single ``journal_error`` event.
         from tests.subsystem.conftest import InMemoryFaultJournal
@@ -265,13 +266,16 @@ class TestJournalUnderPressure:
             state.add_participant(ParticipantInfo(id=pid))
 
         j = InMemoryFaultJournal(tmp_path / "jrn", fail_at=2)
+
         # Simulate the runtime's wiring: failure callback posts a
         # journal_error event.
         def on_failure(exc):
-            bus.post(ev.journal_error(
-                exception_class=type(exc).__name__,
-                message=str(exc),
-            ))
+            bus.post(
+                ev.journal_error(
+                    exception_class=type(exc).__name__,
+                    message=str(exc),
+                )
+            )
 
         j.set_failure_callback(on_failure)
         j.open()
@@ -286,7 +290,8 @@ class TestJournalUnderPressure:
 
         assert j.degraded is True
         errors = [
-            e for e in bus.snapshot()
+            e
+            for e in bus.snapshot()
             if e.kind == "control"
             and isinstance(e.body, dict)
             and e.body.get("control_type") == "journal_error"
@@ -328,10 +333,8 @@ class TestJournalUnderPressure:
         # at iteration K must be equivalent to the original.
         cfg = RoomConfig()
         original = RoomState(config=cfg)
-        original.add_participant(
-            ParticipantInfo(id="loom", cost_tier=0))
-        original.add_participant(
-            ParticipantInfo(id="claude_code", cost_tier=1))
+        original.add_participant(ParticipantInfo(id="loom", cost_tier=0))
+        original.add_participant(ParticipantInfo(id="claude_code", cost_tier=1))
         original.set_default_responder("loom")
         original.set_anchor("loom")
         original.set_topic("design review")
@@ -341,6 +344,7 @@ class TestJournalUnderPressure:
 
         # Build the snapshot dict the same way the journal does.
         from loom.kernel.journal import Journal as _J
+
         current = original
         for _ in range(50):
             d = _J._state_to_dict(current)
@@ -349,8 +353,7 @@ class TestJournalUnderPressure:
         assert current.topic == original.topic
         assert current.default_responder_id == original.default_responder_id
         assert current.anchor_id == original.anchor_id
-        assert sorted(current.participants.keys()) == \
-            sorted(original.participants.keys())
+        assert sorted(current.participants.keys()) == sorted(original.participants.keys())
         assert current.control.roles == original.control.roles
         assert current.control.style == original.control.style
 
@@ -358,6 +361,7 @@ class TestJournalUnderPressure:
 # ---------------------------------------------------------------------------
 # Replay correctness.
 # ---------------------------------------------------------------------------
+
 
 class TestJournalReplayCorrectness:
     """``Journal.replay_into`` posts events to a fresh bus.
