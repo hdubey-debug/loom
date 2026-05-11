@@ -34,7 +34,7 @@ from typing import Callable, Iterable, Literal, Optional
 import threading
 
 from loom.kernel import events as ev
-from loom.kernel.bus import MessageBus
+from loom.kernel.bus import _KERNEL_AUTH, MessageBus
 from loom.kernel.coordinator import RoomCoordinator, TurnLease
 from loom.kernel.events import Event, control_type_of
 from loom.kernel.user_turn import UserTurn
@@ -76,6 +76,12 @@ def _trigger_priority(event: Event, my_id: str,
     actionable here; the room's allowed-speakers gate (in
     :meth:`RoomCoordinator.acquire_lease`) handles inter-agent
     addressing through the obligation/allowed path.
+
+    v0.2: this function is the kernel default; advanced users can
+    override the priority hook via
+    :attr:`loom.kernel.room.RoomConfig.trigger_priority` (which
+    defaults to :data:`DEFAULT_TRIGGER_PRIORITY`, a re-export of
+    this function under the public name).
     """
     if (event.kind == "chat" and event.sender == "user"
             and my_id in event.addressees):
@@ -108,16 +114,33 @@ def _trigger_priority(event: Event, my_id: str,
     return None
 
 
-def pick_priority_trigger(events: Iterable[Event], my_id: str,
-                          user_turn: Optional[UserTurn]) -> Optional[Event]:
+# v0.2: public re-export of the kernel default. Custom callables with
+# the same shape can replace it via ``RoomConfig.trigger_priority``.
+DEFAULT_TRIGGER_PRIORITY = _trigger_priority
+
+
+def pick_priority_trigger(
+    events: Iterable[Event], my_id: str,
+    user_turn: Optional[UserTurn],
+    *,
+    priority_fn: Optional[Callable[
+        [Event, str, Optional[UserTurn]], Optional[int]]] = None,
+) -> Optional[Event]:
     """Pick the highest-priority event from ``events``, or ``None``.
 
     Sort key: ``(priority_class_asc, -event.id)``. Newest event wins
     inside a priority class.
+
+    ``priority_fn`` defaults to :data:`DEFAULT_TRIGGER_PRIORITY`
+    (the kernel's three-class scheme); pass a custom callable with
+    the same shape to override per-call. When invoked from the
+    actor loop the caller forwards
+    :attr:`RoomConfig.trigger_priority` here.
     """
+    fn = priority_fn or DEFAULT_TRIGGER_PRIORITY
     candidates: list[tuple[int, int, Event]] = []
     for e in events:
-        prio = _trigger_priority(e, my_id, user_turn)
+        prio = fn(e, my_id, user_turn)
         if prio is None:
             continue
         candidates.append((prio, -e.id, e))
@@ -132,7 +155,11 @@ def pick_priority_trigger(events: Iterable[Event], my_id: str,
 # ---------------------------------------------------------------------------
 
 def decide(events: list[Event], my_id: str,
-           user_turn: Optional[UserTurn]) -> AgentDecision:
+           user_turn: Optional[UserTurn],
+           *,
+           priority_fn: Optional[Callable[
+               [Event, str, Optional[UserTurn]], Optional[int]]] = None,
+           ) -> AgentDecision:
     """Pure decision function. No mutation, no I/O.
 
     ``events`` is the per-wakeup batch (already audience-filtered and
@@ -144,6 +171,10 @@ def decide(events: list[Event], my_id: str,
     - a dead_letter rerouted to me, OR
     - the user post that opened the current turn AND I hold an
       unresolved obligation for it.
+
+    ``priority_fn`` overrides the kernel's :data:`DEFAULT_TRIGGER_PRIORITY`
+    classifier. The actor loop forwards
+    :attr:`RoomConfig.trigger_priority`.
     """
     considered = [e.id for e in events]
     if not events or user_turn is None:
@@ -153,7 +184,8 @@ def decide(events: list[Event], my_id: str,
             reason="empty batch" if not events else "no open user_turn",
         )
 
-    trigger = pick_priority_trigger(events, my_id, user_turn)
+    trigger = pick_priority_trigger(
+        events, my_id, user_turn, priority_fn=priority_fn)
     if trigger is None:
         return AgentDecision(
             action="SKIP", trigger_event_id=None,
@@ -323,7 +355,7 @@ class ParticipantActor:
                     participant_id=self.id,
                     exception_class=type(exc).__name__,
                     message=str(exc)[:500],
-                ))
+                ), auth=_KERNEL_AUTH)
             except Exception:
                 pass
 
@@ -351,7 +383,9 @@ class ParticipantActor:
                 replays.append(hit)
             snap = replays + snap
 
-        decision = decide(snap, self.id, self.coordinator.user_turn)
+        priority_fn = self.coordinator.config.trigger_priority or None
+        decision = decide(snap, self.id, self.coordinator.user_turn,
+                          priority_fn=priority_fn)
 
         if snap:
             highest = max(e.id for e in snap)

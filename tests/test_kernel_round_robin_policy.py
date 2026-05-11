@@ -26,7 +26,7 @@ def _state_with(*pids_with_active: tuple[str, bool, bool]) -> RoomState:
 
 
 class RoundRobinFirstTurn(unittest.TestCase):
-    """First post: turn_taking_mode is broadcast → arm round-robin."""
+    """First post: turn_order is empty → arm round-robin."""
 
     def test_first_post_arms_mode_and_picks_order_zero(self):
         state = _state_with(("a", True, True), ("b", True, True),
@@ -38,7 +38,7 @@ class RoundRobinFirstTurn(unittest.TestCase):
         self.assertEqual(plan.required_participants, {"a"})
         self.assertEqual(plan.max_responses, 1)
         self.assertTrue(plan.wait_for_user_after)
-        self.assertEqual(plan.set_turn_taking_mode, "round_robin")
+        # A non-empty ``set_turn_order`` is the round-robin arm signal.
         self.assertEqual(plan.set_turn_order, ["a", "b", "c"])
         self.assertTrue(plan.advance_turn_pointer)
 
@@ -68,7 +68,7 @@ class RoundRobinSubsequent(unittest.TestCase):
                      order: list[str] | None = None) -> RoomState:
         state = _state_with(("a", True, True), ("b", True, True),
                             ("c", True, True))
-        state.control.turn_taking_mode = "round_robin"
+        # A non-empty turn_order is itself the round-robin mode signal.
         state.control.turn_order = list(order or ["a", "b", "c"])
         state.control.next_speaker_idx = idx
         return state
@@ -80,8 +80,7 @@ class RoundRobinSubsequent(unittest.TestCase):
         )
         self.assertEqual(plan.required_participants, {"a"})
         self.assertTrue(plan.advance_turn_pointer)
-        # No state-mutation flags on subsequent turns (kernel keeps mode).
-        self.assertIsNone(plan.set_turn_taking_mode)
+        # No state-mutation flags on subsequent turns (kernel keeps order).
         self.assertIsNone(plan.set_turn_order)
 
     def test_idx_one_picks_second(self):
@@ -103,7 +102,6 @@ class RoundRobinSubsequent(unittest.TestCase):
         # becomes [a, c]. idx=1 mod 2 = 1 → c.
         state = _state_with(("a", True, True), ("b", False, True),
                             ("c", True, True))
-        state.control.turn_taking_mode = "round_robin"
         state.control.turn_order = ["a", "b", "c"]
         state.control.next_speaker_idx = 1
         plan = RoundRobinPolicy(["a", "b", "c"]).plan_user_turn(
@@ -112,7 +110,6 @@ class RoundRobinSubsequent(unittest.TestCase):
 
     def test_all_inactive_returns_no_response(self):
         state = _state_with(("a", False, True), ("b", False, True))
-        state.control.turn_taking_mode = "round_robin"
         state.control.turn_order = ["a", "b"]
         plan = RoundRobinPolicy(["a", "b"]).plan_user_turn(
             ev.chat(sender="user", body="anyone?"), state)

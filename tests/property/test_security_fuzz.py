@@ -385,3 +385,93 @@ def test_buggy_scrubber_does_not_break_redaction():
         assert "sk-" not in out or "[redacted-secret]" in out
     finally:
         ev.clear_secret_scrubbers()
+
+
+# ---------------------------------------------------------------------------
+# SecretShape detector framework (v0.2)
+# ---------------------------------------------------------------------------
+
+def test_register_secret_shape_detects_custom_pattern():
+    """A custom SecretShape detector contributes to redaction."""
+    import re as _re
+    from loom.kernel.events import _RegexShape
+
+    custom = _RegexShape(
+        "internal_token", _re.compile(r"INT-[A-Z0-9]{12}"))
+    ev.register_secret_shape(custom)
+    try:
+        out = redact_error_text("err: leaked INT-ABCDEF123456 oops")
+        assert "INT-ABCDEF123456" not in out
+        assert "[redacted-secret]" in out
+    finally:
+        ev.clear_secret_scrubbers()
+
+
+def test_default_shapes_each_have_a_unique_name():
+    """Default shapes are named for audit/observability."""
+    from loom.kernel.events import _DEFAULT_SHAPES
+    names = [s.name for s in _DEFAULT_SHAPES]
+    assert len(names) == len(set(names)), names
+    # Sanity: covers the seven canonical secret families.
+    assert {"openai_sk", "anthropic_sk_ant", "bearer_token",
+            "aws_access_key", "jwt", "gcp_api_key", "gcp_oauth"} \
+        .issubset(set(names))
+
+
+def test_secret_shape_protocol_allows_non_regex_detectors():
+    """Custom non-regex detectors satisfy the SecretShape protocol."""
+    class _PalindromeShape:
+        # A toy structural detector: any 10-char prefix-marked palindrome.
+        name = "palindrome10"
+
+        def detect(self, text: str):
+            i = 0
+            while i + 10 <= len(text):
+                window = text[i:i + 10]
+                if window.startswith("@@") and window == window[::-1]:
+                    yield (i, i + 10)
+                i += 1
+
+    ev.register_secret_shape(_PalindromeShape())
+    try:
+        s = "leak: @@abccba@@ trail"
+        out = redact_error_text(s)
+        assert "@@abccba@@" not in out
+        assert "[redacted-secret]" in out
+    finally:
+        ev.clear_secret_scrubbers()
+
+
+def test_buggy_shape_detector_does_not_break_redaction():
+    class _BadShape:
+        name = "bad"
+
+        def detect(self, _text):
+            raise RuntimeError("boom")
+
+    ev.register_secret_shape(_BadShape())
+    try:
+        out = redact_error_text("api: sk-AAAAAAAAAAAAAAAAAAAAAAAA fail")
+        assert "[redacted-secret]" in out
+    finally:
+        ev.clear_secret_scrubbers()
+
+
+def test_overlapping_shape_spans_render_single_placeholder():
+    """When two detectors match overlapping regions, only one placeholder appears."""
+    import re as _re
+    from loom.kernel.events import _RegexShape
+
+    # ``sk-ant-...`` is matched by BOTH the explicit anthropic shape
+    # AND the legacy ``sk-...`` shape in the defaults.
+    out = redact_error_text(
+        "err: sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA happened")
+    assert out.count("[redacted-secret]") == 1
+
+
+@given(noise=st.text(alphabet="abcdefghijklmnop", max_size=80))
+@settings(suppress_health_check=[HealthCheck.too_slow])
+def test_shape_detectors_do_not_fire_on_short_lowercase_text(noise: str):
+    """No detector fires on short lowercase non-secret strings."""
+    out = redact_error_text(noise)
+    assert "[redacted-secret]" not in out

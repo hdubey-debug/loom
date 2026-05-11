@@ -109,7 +109,11 @@ class TestSlashCommandsMultiTurn:
         roles = dict(room.session.state.control.roles)
         assert roles == {"rc0": "teacher", "rc1": "student"}
 
-    def test_console_floor_then_release_round_trip(self, scripted_console):
+    def test_console_floor_and_release_return_removed_notice(
+            self, scripted_console):
+        # v0.2: /floor, /release, /quiet were removed. The console no
+        # longer mutates kernel state — it returns a removed-feature
+        # notice that the user can read in the console output.
         room = _build_room(n_agents=2)
         script = scripted_console([
             "/floor rc0",
@@ -117,7 +121,9 @@ class TestSlashCommandsMultiTurn:
             "/quit",
         ])
         room.run_console(prompt_fn=script.prompt_fn, notify=script.notify)
-        assert room.session.state.control.floor_owner is None
+        # Nothing on the (now-absent) floor_owner field; the kernel
+        # state was not mutated by the commands.
+        assert not hasattr(room.session.state.control, "floor_owner")
 
     def test_console_set_brief_then_normal_then_detailed_emits_style_changed(
             self, scripted_console, event_recorder):

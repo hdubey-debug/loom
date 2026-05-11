@@ -185,8 +185,10 @@ class RoundRobinIntegration(unittest.TestCase):
                 observed.append(chats[0].sender)
             self.assertEqual(observed, ["alpha", "bravo", "charlie"])
             self.assertEqual(session.state.control.next_speaker_idx, 0)
+            # Round-robin mode is signalled by a non-empty turn_order.
             self.assertEqual(
-                session.state.control.turn_taking_mode, "round_robin")
+                session.state.control.turn_order,
+                ["alpha", "bravo", "charlie"])
         finally:
             session.stop()
 

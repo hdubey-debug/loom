@@ -34,7 +34,6 @@ from loom.kernel.streaming import (
 from loom.policy.default import (
     _instruction_for_broadcast,
     _instruction_for_directed,
-    _instruction_for_floor,
     _instruction_for_game_start,
     _instruction_for_round_robin,
     _is_acknowledgement,
@@ -139,18 +138,6 @@ def test_instruction_for_directed_multi_addressee():
     """Covers: default.py:204-206 — multi-addressee branch."""
     out = _instruction_for_directed(["alice", "bob"], _CtlView())
     assert "one of the addressed" in out
-
-
-def test_instruction_for_floor_with_topic():
-    """Covers: floor instruction renders topic (post-P2.3 merge)."""
-    out = _instruction_for_floor(["alice"], _CtlView(), topic="WIN")
-    assert "WIN" in out
-
-
-def test_instruction_for_floor_multi_active():
-    """Covers: default.py:219-222 — multi-floor branch."""
-    out = _instruction_for_floor(["alice", "bob"], _CtlView())
-    assert "narrowed" in out
 
 
 def test_instruction_for_broadcast_with_topic():

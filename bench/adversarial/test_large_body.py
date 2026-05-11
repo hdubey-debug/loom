@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from loom.kernel import events as ev
-from loom.kernel.bus import BodyOversizeError, MessageBus
+from loom.kernel.bus import _KERNEL_AUTH, BodyOversizeError, MessageBus
 
 
 pytestmark = [pytest.mark.adversarial]
@@ -22,14 +22,14 @@ def test_oversize_body_is_rejected_before_log_grows(bench):
     big = "x" * (1024 * 1024)  # 1 MB
 
     # Establish baseline log length.
-    bus.post_internal(ev.chat(sender="user", body="hi"))
+    bus.post_internal(ev.chat(sender="user", body="hi"), auth=_KERNEL_AUTH)
     initial_len = len(bus)
 
     raised: list[Exception] = []
 
     def attempt():
         try:
-            bus.post_internal(ev.chat(sender="user", body=big))
+            bus.post_internal(ev.chat(sender="user", body=big), auth=_KERNEL_AUTH)
         except BodyOversizeError as exc:
             raised.append(exc)
 
@@ -56,7 +56,7 @@ def test_within_cap_body_is_accepted(bench):
     payload = "x" * (256 * 1024 - 1)  # one byte under the cap
 
     def attempt():
-        bus.post_internal(ev.chat(sender="user", body=payload))
+        bus.post_internal(ev.chat(sender="user", body=payload), auth=_KERNEL_AUTH)
 
     res = bench(attempt, name="under_cap_body_accepted", iters=20, warmup=2)
     # The bus log has grown (one event per iter + warmup).

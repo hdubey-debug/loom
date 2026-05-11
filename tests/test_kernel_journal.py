@@ -245,7 +245,6 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             original.add_participant(ParticipantInfo(id="claude_code"))
             original.set_roles({"loom": "teacher",
                                 "claude_code": "quizzer"})
-            original.set_floor_owner(["loom"])
             original.set_wait_for_user(True)
             original.set_style("brief")
             original.set_topic("teach derivatives")
@@ -256,7 +255,6 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             self.assertEqual(restored.control.roles,
                              {"loom": "teacher",
                               "claude_code": "quizzer"})
-            self.assertEqual(restored.control.floor_owner, ["loom"])
             self.assertTrue(restored.control.wait_for_user)
             self.assertEqual(restored.control.style, "brief")
             self.assertEqual(restored.topic, "teach derivatives")
@@ -280,25 +278,22 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             data = j.load_state()
             restored = restore_state(data, RoomConfig())
             self.assertEqual(restored.control.roles, {})
-            self.assertIsNone(restored.control.floor_owner)
             self.assertEqual(restored.control.style, "normal")
 
     def test_round_robin_state_roundtrip(self):
-        """Round-robin mode + turn order + pointer survive snapshot."""
+        """Round-robin turn order + pointer survive snapshot."""
         with tempfile.TemporaryDirectory() as tmpdir:
             j = Journal(tmpdir)
             cfg = RoomConfig()
             original = RoomState(config=cfg)
             original.add_participant(ParticipantInfo(id="loom"))
             original.add_participant(ParticipantInfo(id="claude_code"))
-            original.set_turn_taking_mode("round_robin")
             original.set_turn_order(["loom", "claude_code"])
             original.advance_round_robin_pointer()  # idx -> 1
             j.snapshot(original)
 
             restored = restore_state(j.load_state(), cfg)
-            self.assertEqual(restored.control.turn_taking_mode,
-                             "round_robin")
+            # v5 schema: a non-empty turn_order is the round-robin signal.
             self.assertEqual(restored.control.turn_order,
                              ["loom", "claude_code"])
             self.assertEqual(restored.control.next_speaker_idx, 1)
@@ -327,7 +322,6 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             }))
             j = Journal(tmpdir)
             restored = restore_state(j.load_state(), RoomConfig())
-            self.assertEqual(restored.control.turn_taking_mode, "broadcast")
             self.assertEqual(restored.control.turn_order, [])
             self.assertEqual(restored.control.next_speaker_idx, 0)
 
@@ -358,9 +352,41 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             }))
             j = Journal(tmpdir)
             restored = restore_state(j.load_state(), RoomConfig())
-            self.assertEqual(restored.control.turn_taking_mode, "broadcast")
+            # v3/v4 snapshots carrying the retired turn_taking_mode field
+            # are tolerated; malformed turn_order / next_speaker_idx
+            # default to empty / 0.
             self.assertEqual(restored.control.turn_order, [])
             self.assertEqual(restored.control.next_speaker_idx, 0)
+
+    def test_v3_snapshot_with_round_robin_mode_carries_turn_order(self):
+        """v3 snapshots with `turn_taking_mode=round_robin` restore via turn_order."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "room_state.json").write_text(json.dumps({
+                "version": 3,
+                "room_epoch": 0,
+                "topic": None,
+                "anchor_id": None,
+                "chair_id": None,
+                "default_responder_id": None,
+                "default_summarizer_id": None,
+                "current_user_turn_id": None,
+                "last_compacted_event_id": -1,
+                "participants": [],
+                "control": {
+                    "roles": {},
+                    "floor_owner": None,
+                    "wait_for_user": False,
+                    "style": "normal",
+                    "turn_taking_mode": "round_robin",
+                    "turn_order": ["a", "b"],
+                    "next_speaker_idx": 1,
+                },
+            }))
+            j = Journal(tmpdir)
+            restored = restore_state(j.load_state(), RoomConfig())
+            # The mode field is discarded; turn_order alone signals RR.
+            self.assertEqual(restored.control.turn_order, ["a", "b"])
+            self.assertEqual(restored.control.next_speaker_idx, 1)
 
     def test_corrupt_control_dict_falls_back_to_defaults(self):
         """If ``control`` is malformed, restore_state must not crash."""
@@ -388,7 +414,6 @@ class RoomControlStateRoundTrip(unittest.TestCase):
             data = j.load_state()
             restored = restore_state(data, RoomConfig())
             self.assertEqual(restored.control.roles, {})
-            self.assertIsNone(restored.control.floor_owner)
             self.assertEqual(restored.control.style, "normal")
 
 

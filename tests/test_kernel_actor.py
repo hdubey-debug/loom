@@ -102,6 +102,42 @@ class PickPriorityTrigger(unittest.TestCase):
         chosen = pick_priority_trigger(bus.snapshot(), "loom", None)
         self.assertIsNone(chosen)
 
+    def test_custom_priority_fn_can_invert_order(self):
+        # Custom hook treats system messages as the top trigger and
+        # ignores everything else — verifies the override path.
+        bus, state, c = _setup()
+        e_user = _user_post(bus, "claude_code, hi",
+                            addressees=["claude_code"])
+        ut = _open_required(c, e_user, required=("claude_code",))
+        e_sys = ev.system("special signal")
+        bus.post(e_sys)
+
+        def _system_first(event, my_id, user_turn):
+            del my_id, user_turn
+            if event.kind == "system":
+                return 0
+            return None
+
+        chosen = pick_priority_trigger(
+            bus.snapshot(), "claude_code", ut,
+            priority_fn=_system_first)
+        # Without override, the user direct mention would have won;
+        # with override the system event wins (everything else is None).
+        self.assertEqual(chosen.id, e_sys.id)
+
+    def test_default_priority_fn_unchanged_when_none(self):
+        # Passing priority_fn=None falls back to DEFAULT_TRIGGER_PRIORITY.
+        bus, state, c = _setup()
+        e_user = _user_post(bus, "claude_code, hi",
+                            addressees=["claude_code"])
+        ut = _open_required(c, e_user, required=("claude_code",))
+        chosen_none = pick_priority_trigger(
+            bus.snapshot(), "claude_code", ut, priority_fn=None)
+        chosen_default = pick_priority_trigger(
+            bus.snapshot(), "claude_code", ut)
+        self.assertEqual(chosen_none.id, chosen_default.id)
+        self.assertEqual(chosen_none.id, e_user.id)
+
     def test_empty_batch_returns_none(self):
         self.assertIsNone(pick_priority_trigger([], "loom", None))
 

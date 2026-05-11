@@ -104,21 +104,20 @@ class TestReadOnlyViewUnderConcurrency:
         assert errors == []
         assert thread_harness.errors == []
 
-    def test_view_reflects_membership_changes_atomically(self):
-        # The participants mapping inside the view is a live
-        # MappingProxyType, so post-view membership changes are visible
-        # through it. ``room_epoch`` is captured at view() time (frozen
-        # dataclass field) — re-call view() to see the new epoch.
+    def test_view_membership_snapshot_at_call(self):
+        # ``view()`` snapshots both ``room_epoch`` and the participant
+        # mapping (entries are constructed as frozen ParticipantInfoView
+        # values at call time). A fresh view() call captures the bumped
+        # epoch and the new participant.
         state = RoomState(config=RoomConfig())
         state.add_participant(ParticipantInfo(id="loom"))
         v1 = state.view()
         e1 = v1.room_epoch
         state.add_participant(ParticipantInfo(id="newcomer"))
-        # Live participant mapping reflects the new id.
-        assert "newcomer" in v1.participants
-        # A fresh view() call captures the bumped epoch.
+        assert "newcomer" not in v1.participants
         v2 = state.view()
         assert v2.room_epoch == e1 + 1
+        assert "newcomer" in v2.participants
 
 
 # ---------------------------------------------------------------------------

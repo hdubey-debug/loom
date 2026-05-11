@@ -96,7 +96,6 @@ def test_open_chat_policy_plan_invariants(pids, addressees):
 def test_round_robin_policy_plan_invariants(pids, addressees):
     """RoundRobinPolicy plans are well-formed when rotation is set."""
     state = _build_state(pids)
-    state.set_turn_taking_mode("round_robin")
     state.set_turn_order(pids)
     policy = RoundRobinPolicy(order=pids)
     e = _user_event(addressees)

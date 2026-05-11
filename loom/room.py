@@ -601,26 +601,6 @@ class LoomRoom:
             self._require_participant(pid)
         self._session.coordinator.set_roles(dict(roles))
 
-    def set_floor(
-        self,
-        participant_ids: Optional[Iterable[str]],
-    ) -> None:
-        """Set or clear the floor owner(s).
-
-        Pass ``None`` or an empty iterable to open the floor. Otherwise
-        each id must be a current participant.
-        """
-        if participant_ids is None:
-            self._session.coordinator.set_floor_owner(None)
-            return
-        ids = list(participant_ids)
-        if not ids:
-            self._session.coordinator.set_floor_owner(None)
-            return
-        for pid in ids:
-            self._require_participant(pid)
-        self._session.coordinator.set_floor_owner(ids)
-
     def set_style(self, style: StyleLevel) -> None:
         """Update brevity preference. One of ``"brief" | "normal" | "detailed"``."""
         if style not in ("brief", "normal", "detailed"):

@@ -108,7 +108,7 @@ class TestProcessRestartFromJournal:
         assert isinstance(replies, (list, __import__("loom").TurnResult))
 
     @pytest.mark.disk
-    def test_restart_preserves_round_robin_turn_taking_mode_and_pointer(
+    def test_restart_preserves_round_robin_turn_order_and_pointer(
             self, journaled_room, restart_helper, varied_agents):
         agents = varied_agents(3, prefix="rr")
         order = ["rr0", "rr1", "rr2"]
@@ -120,7 +120,7 @@ class TestProcessRestartFromJournal:
         for i in range(4):
             room.post_and_wait(f"q{i}", timeout=5.0)
         pre_pointer = room.session.state.control.next_speaker_idx
-        pre_mode = room.session.state.control.turn_taking_mode
+        pre_order = list(room.session.state.control.turn_order)
         new_room, restored = restart_helper(
             room,
             agents=varied_agents(3, prefix="rr"),
@@ -128,9 +128,9 @@ class TestProcessRestartFromJournal:
         )
         assert restored is not None
         ctl = restored.get("control") or {}
-        assert ctl.get("turn_taking_mode") == pre_mode == "round_robin"
+        # v5 schema: a non-empty turn_order is the round-robin signal.
+        assert ctl.get("turn_order") == pre_order == order
         assert ctl.get("next_speaker_idx") == pre_pointer
-        assert ctl.get("turn_order") == order
 
     @pytest.mark.disk
     def test_restart_preserves_room_control_state_floor_roles_style(
@@ -142,13 +142,12 @@ class TestProcessRestartFromJournal:
             policy=OpenChatPolicy(),
         )
         # Drive slash commands via the public run_console facade to set
-        # roles / floor / style. ``run_console`` calls ``room.stop()``
+        # roles / style. ``run_console`` calls ``room.stop()``
         # internally on exit, so we capture the journal_dir first and
         # use a separate stop+restart flow.
         journal_dir = room.journal_dir
         script = scripted_console([
             "/roles rc0=teacher rc1=student",
-            "/floor rc0",
             "/brief",
             "/quit",
         ])
@@ -160,7 +159,8 @@ class TestProcessRestartFromJournal:
         assert restored is not None
         ctl = restored.get("control") or {}
         assert ctl.get("roles") == {"rc0": "teacher", "rc1": "student"}
-        assert ctl.get("floor_owner") == ["rc0"]
+        # v0.2: floor_owner removed from kernel state and snapshots.
+        assert "floor_owner" not in ctl
         assert ctl.get("style") == "brief"
         # The fresh second room can still post and stop cleanly.
         new_agents = varied_agents(2, prefix="rc")
@@ -253,7 +253,7 @@ class TestGracefulShutdown:
         loader = Journal(journal_dir)
         snap = loader.load_state()
         assert snap is not None
-        assert snap.get("version") in (1, 2, 3, 4)
+        assert snap.get("version") in (1, 2, 3, 4, 5)
 
     def test_stop_with_in_flight_streams_marks_lease_expired_or_cancelled(
             self, mixed_agent_room, event_recorder):

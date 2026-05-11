@@ -26,10 +26,14 @@ Snapshot version history:
   v0 :class:`RoomState`.
 - v2: drops ``mode``/``debate``. Adds nothing new.
 - v3: adds ``turn_taking_mode``, ``turn_order``, ``next_speaker_idx``.
-- v4 (current): drops ``active_goal`` from control state. v3 / v2 / v1
-  snapshots that carry an ``active_goal`` value are honored as a
-  fallback for ``RoomState.topic`` when topic itself is unset (P2.3
-  topic-merge restore shim).
+- v4: drops ``active_goal`` from control state.
+- v5 (current): drops ``turn_taking_mode``; round-robin is now signalled
+  by ``turn_order`` being non-empty. v4 / v3 snapshots that carry a
+  ``turn_taking_mode`` value are read but the field is discarded — if
+  the snapshot was in ``round_robin`` the corresponding ``turn_order``
+  is what restores the rotation. v3 snapshots that carry
+  ``active_goal`` are honored as a fallback for ``RoomState.topic``
+  (P2.3 topic-merge restore shim).
 
 Old ``events.jsonl`` lines with retired control types
 (``mode_changed`` / ``debate_turn`` / ``forfeit`` / ``debate_end``)
@@ -54,6 +58,7 @@ import stat
 import warnings
 
 from loom.kernel import events as _ev
+from loom.kernel.bus import _KERNEL_AUTH
 from loom.kernel.events import Event, EventShapeError, is_known_control
 from loom.kernel.room import (
     ParticipantInfo,
@@ -61,19 +66,20 @@ from loom.kernel.room import (
     RoomControlState,
     RoomState,
     StyleLevel,
-    TurnTakingMode,
 )
 
 
-SNAPSHOT_VERSION = 4
+SNAPSHOT_VERSION = 5
 
 # v1 snapshots are still readable; the restore loop ignores keys
 # (``mode``, ``debate``) that no longer exist on RoomState. v2 snapshots
-# omit ``turn_taking_mode`` / ``turn_order`` / ``next_speaker_idx`` —
-# those default to broadcast / empty / 0 in :func:`restore_state`. v3
-# snapshots may carry ``control.active_goal``; the v4 restore shim
-# folds it into ``state.topic`` when topic is unset.
-_SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4})
+# omit ``turn_order`` / ``next_speaker_idx`` — those default to empty /
+# 0 in :func:`restore_state`. v3 / v4 snapshots may carry the retired
+# ``turn_taking_mode`` field; restore_state discards it (round-robin
+# is signalled by a non-empty ``turn_order``). v3 snapshots may carry
+# ``control.active_goal``; the topic-merge restore shim folds it into
+# ``state.topic`` when topic is unset.
+_SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5})
 
 
 class Journal:
@@ -496,12 +502,8 @@ class Journal:
             # session resumes with the same constraints.
             "control": {
                 "roles": dict(state.control.roles),
-                "floor_owner": (list(state.control.floor_owner)
-                                if state.control.floor_owner is not None
-                                else None),
                 "wait_for_user": state.control.wait_for_user,
                 "style": state.control.style,
-                "turn_taking_mode": state.control.turn_taking_mode,
                 "turn_order": list(state.control.turn_order),
                 "next_speaker_idx": state.control.next_speaker_idx,
             },
@@ -630,7 +632,7 @@ class Journal:
             # — replay is privileged kernel code by definition; the
             # disk content has been validated by ``Event.from_jsonl`` /
             # ``EventShapeError``.
-            coordinator.bus.post_internal(event)
+            coordinator.bus.post_internal(event, auth=_KERNEL_AUTH)
             posted += 1
         return posted
 
@@ -736,17 +738,15 @@ def restore_state(
         roles = control_data.get("roles") or {}
         if not isinstance(roles, dict):
             roles = {}
-        floor = control_data.get("floor_owner")
-        if floor is not None and not isinstance(floor, list):
-            floor = None
+        # ``floor_owner`` was removed from kernel state in v0.2. Older
+        # (v1-v4) snapshots may still carry the field; we read but
+        # discard it (no equivalent state in v5+).
         style = control_data.get("style") or "normal"
         if style not in ("brief", "normal", "detailed"):
             style = "normal"
-        # Round-robin fields (added in v3 snapshot). Older snapshots
-        # default to broadcast mode with an empty rotation.
-        ttm = control_data.get("turn_taking_mode", "broadcast")
-        if ttm not in ("broadcast", "round_robin"):
-            ttm = "broadcast"
+        # Round-robin fields. v3 / v4 snapshots may carry the retired
+        # ``turn_taking_mode`` field; we ignore it — a non-empty
+        # ``turn_order`` is the round-robin signal in v5.
         raw_order = control_data.get("turn_order") or []
         if not isinstance(raw_order, list):
             raw_order = []
@@ -758,10 +758,8 @@ def restore_state(
             next_idx = 0
         state.control = RoomControlState(
             roles={str(k): str(v) for k, v in roles.items()},
-            floor_owner=list(floor) if floor else None,
             wait_for_user=bool(control_data.get("wait_for_user", False)),
             style=cast(StyleLevel, style),
-            turn_taking_mode=cast(TurnTakingMode, ttm),
             turn_order=[str(p) for p in raw_order],
             next_speaker_idx=next_idx,
         )

@@ -29,7 +29,7 @@ from loom.contracts import ConversationPolicy
 from loom.kernel import events as ev
 from loom.kernel.actor import ParticipantActor
 from loom.kernel.addressees import parse_addressees
-from loom.kernel.bus import MessageBus
+from loom.kernel.bus import _KERNEL_AUTH, MessageBus
 from loom.kernel.coordinator import RoomCoordinator
 from loom.kernel.events import Event
 from loom.kernel.journal import Journal
@@ -165,6 +165,12 @@ class LoomSession:
         if self._stop_event.is_set():
             raise RuntimeError("session is stopped; cannot restart")
         with self._membership_lock:
+            # v0.2: the coordinator's dedicated watchdog thread (idle
+            # timeout poller) runs alongside the actor pool. Without
+            # it, the only path that closes idle turns is the watchdog
+            # check kept on ``actor._loop``; that path is fine but
+            # depends on actor wake cadence.
+            self.coordinator.start_watchdog()
             for a in self.actors:
                 a.start()  # ParticipantActor.start is idempotent
             self._started = True
@@ -172,6 +178,7 @@ class LoomSession:
     def stop(self, *, timeout: float = 1.0) -> None:
         """Signal shutdown: stop actors, close journal, stop bus."""
         self._stop_event.set()
+        self.coordinator.stop_watchdog(timeout=timeout)
         for a in list(self.actors):
             a.stop(timeout=timeout)
         if self.journal is not None:
@@ -228,10 +235,12 @@ def build_loom_session(
     cfg = config or RoomConfig()
     bus = MessageBus()
     state = RoomState(config=cfg)
-    coord = RoomCoordinator(bus, state, policy_error_mode=policy_error_mode)
 
     if policy is None:
         policy = DefaultPolicy()
+    coord = RoomCoordinator(bus, state,
+                            policy_error_mode=policy_error_mode,
+                            policy=policy)
 
     journal = None
     if journal_dir is not None:
@@ -261,7 +270,7 @@ def build_loom_session(
             bus.post_internal(ev.journal_error(
                 exception_class=type(exc).__name__,
                 message=str(exc)[:500],
-            ))
+            ), auth=_KERNEL_AUTH)
 
         journal.set_failure_callback(_on_journal_failure)
 
@@ -272,7 +281,7 @@ def build_loom_session(
         # sender="system".
         def _on_snapshot_drop(total: int, depth: int) -> None:
             bus.post_internal(ev.snapshot_dropped(
-                dropped_total=total, queue_depth=depth))
+                dropped_total=total, queue_depth=depth), auth=_KERNEL_AUTH)
 
         journal.set_snapshot_drop_callback(_on_snapshot_drop)
 
@@ -360,11 +369,8 @@ def handle_slash_command(text: str, session: LoomSession,
     if cmd == "who":
         ps = sorted(state.participants.keys())
         ctl = state.control
-        floor = (", ".join(ctl.floor_owner) if ctl.floor_owner
-                 else "(open)")
         bits = [f"members: {', '.join(ps)}",
                 f"topic: {state.topic or '(none)'}",
-                f"floor: {floor}",
                 f"style: {ctl.style}"]
         if ctl.roles:
             bits.append("roles: " + ", ".join(
@@ -505,60 +511,21 @@ def handle_slash_command(text: str, session: LoomSession,
                            for pid, role in sorted(new_roles.items()))
         return SlashResult(handled=True, message=f"roles → {pretty}")
 
-    if cmd == "floor":
-        if not args:
-            owners = state.control.floor_owner
-            if not owners:
-                return SlashResult(handled=True, message="floor: (open)")
-            return SlashResult(handled=True,
-                               message=f"floor: {', '.join(owners)}")
-        ids = args.split()
-        unknown = [p for p in ids if p not in state.participants]
-        if unknown:
-            return SlashResult(
-                handled=True,
-                message=f"unknown participant(s): {', '.join(unknown)}",
-            )
-        coord.set_floor_owner(ids)
-        new_owners = state.control.floor_owner or []
+    if cmd in ("floor", "release", "quiet"):
+        # v0.2: ``RoomControlState.floor_owner`` and the three console
+        # commands that wrote to it (``/floor``, ``/release``, ``/quiet``)
+        # were removed. The field had no kernel-enforced semantics — it
+        # was a soft signal the default policy interpreted to narrow
+        # ``allowed_speakers`` across turns. Equivalent UX patterns:
+        # ``@<id>`` an agent directly for the next turn, or wire a
+        # custom policy that keeps narrowing state of its own.
         return SlashResult(
             handled=True,
-            message=f"floor → {', '.join(new_owners)}",
-        )
-
-    if cmd == "release":
-        if not state.control.floor_owner:
-            return SlashResult(handled=True,
-                               message="floor already open")
-        coord.set_floor_owner(None)
-        return SlashResult(handled=True, message="floor released (open)")
-
-    if cmd == "quiet":
-        if not args:
-            return SlashResult(
-                handled=True,
-                message="usage: /quiet <pid> [<pid> ...]  (silences "
-                        "those agents; everyone else holds the floor)",
-            )
-        silenced = args.split()
-        unknown = [p for p in silenced if p not in state.participants]
-        if unknown:
-            return SlashResult(
-                handled=True,
-                message=f"unknown participant(s): {', '.join(unknown)}",
-            )
-        speakers = [p for p in state.participants if p not in silenced]
-        if not speakers:
-            return SlashResult(
-                handled=True,
-                message="cannot silence every participant — use /release "
-                        "to open the floor.",
-            )
-        coord.set_floor_owner(speakers)
-        return SlashResult(
-            handled=True,
-            message=f"silenced {', '.join(silenced)}; floor → "
-                    f"{', '.join(speakers)}",
+            message=(
+                "/floor /release /quiet were removed in v0.2 — "
+                "address agents directly via @<id> for per-turn "
+                "narrowing, or use a custom policy for persistent "
+                "narrowing."),
         )
 
     if cmd == "goal":
@@ -596,7 +563,6 @@ def handle_slash_command(text: str, session: LoomSession,
         # Diagnostic dump of the current room control state.
         ctl = state.control
         lines = [
-            f"floor: {', '.join(ctl.floor_owner) if ctl.floor_owner else '(open)'}",
             f"wait_for_user: {ctl.wait_for_user}",
             f"style: {ctl.style}",
             f"topic: {state.topic or '(none)'}",
@@ -613,8 +579,8 @@ def handle_slash_command(text: str, session: LoomSession,
         handled=True,
         message=(f"unknown command: /{cmd}  (try /who, /topic, /add, "
                  f"/remove, /cancel, /dm, /summary, /anchor, "
-                 f"/responder, /roles, /floor, /release, /quiet, "
-                 f"/goal, /brief, /normal, /detailed, /control, /leave)"),
+                 f"/responder, /roles, /goal, /brief, /normal, "
+                 f"/detailed, /control, /leave)"),
     )
 
 

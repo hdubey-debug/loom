@@ -126,19 +126,18 @@ class UserTurnPlan:
     - ``instruction``          short natural-language hint rendered into
       the selected speaker's TurnCard (e.g. "Teach the next small step
       slowly"). ``None`` means no extra hint beyond the trigger label.
-    - ``set_turn_taking_mode`` if not ``None``, the coordinator switches
-      :attr:`RoomControlState.turn_taking_mode` to this value when
-      opening the turn. Used by the interpreter to enable round-robin
-      on game-start phrases or restore broadcast on game-end phrases.
     - ``set_turn_order``       if not ``None``, the coordinator replaces
       :attr:`RoomControlState.turn_order` with this list (ignoring
-      unknown ids) and resets the rotation pointer. Pair with
-      ``set_turn_taking_mode="round_robin"`` on first entry.
-    - ``advance_turn_pointer`` if ``True`` AND mode is still
-      ``round_robin`` at close, the coordinator advances the rotation
-      pointer by one. Set on plans whose chosen speaker came from the
-      rotation; left ``False`` for @-mention / vocative overrides so
-      the rotation slot is preserved across the side-question.
+      unknown ids) and resets the rotation pointer. A non-empty
+      ``turn_order`` is the round-robin mode signal — setting it to a
+      non-empty list enters round-robin; clearing it (``[]``) leaves
+      broadcast mode.
+    - ``advance_turn_pointer`` if ``True`` AND round-robin is still
+      active at close (``turn_order`` non-empty), the coordinator
+      advances the rotation pointer by one. Set on plans whose chosen
+      speaker came from the rotation; left ``False`` for @-mention /
+      vocative overrides so the rotation slot is preserved across the
+      side-question.
     """
     requires_response: bool
     routing_case: RoutingCase
@@ -152,7 +151,6 @@ class UserTurnPlan:
     max_responses: int = 0
     wait_for_user_after: bool = False
     instruction: Optional[str] = None
-    set_turn_taking_mode: Optional[str] = None
     set_turn_order: Optional[list[str]] = None
     advance_turn_pointer: bool = False
 
@@ -279,7 +277,6 @@ def plan_with_required(
     max_responses: Optional[int] = None,
     wait_for_user_after: bool = False,
     instruction: Optional[str] = None,
-    set_turn_taking_mode: Optional[str] = None,
     set_turn_order: Optional[list[str]] = None,
     advance_turn_pointer: bool = False,
 ) -> UserTurnPlan:
@@ -320,7 +317,6 @@ def plan_with_required(
         max_responses=max_responses if max_responses is not None else 0,
         wait_for_user_after=wait_for_user_after,
         instruction=instruction,
-        set_turn_taking_mode=set_turn_taking_mode,
         set_turn_order=list(set_turn_order) if set_turn_order is not None else None,
         advance_turn_pointer=advance_turn_pointer,
     )

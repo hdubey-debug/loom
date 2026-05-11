@@ -16,7 +16,10 @@ The bus assigns ``id`` and ``ts`` on post; constructors leave them at zero.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional
+from typing import (
+    Any, Callable, Iterable, Iterator, Literal, Optional, Protocol,
+    Tuple, runtime_checkable,
+)
 import json
 import re
 
@@ -67,45 +70,105 @@ class EventShapeError(LoomError, ValueError):
 # bus / journal / subscribers). Provider exception strings are known to
 # include API-key fragments and request payloads; the kernel boundary
 # applies a defensive scrub even before adapter-specific scrubbers run.
+#
+# v0.2: the seven default patterns are now first-class ``SecretShape``
+# objects (named structural detectors) rather than an anonymous tuple
+# of regexes. The shape framework lets adapters add new detectors by
+# name without monkey-patching the kernel module, and surfaces what
+# class of secret was found at the call site that emits the
+# redaction placeholder (useful for future audit logging).
 # ---------------------------------------------------------------------------
 
-_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+_REDACT_PLACEHOLDER = "[redacted-secret]"
+
+
+@runtime_checkable
+class SecretShape(Protocol):
+    """A named structural detector for a class of secret.
+
+    Implementations expose a short identifier and a ``detect`` method
+    returning the half-open ``(start, end)`` byte offsets of every
+    occurrence in ``text``. They never raise — a buggy detector must
+    never break the error-emission path — and they return matches in
+    increasing start-offset order. Overlapping matches across
+    different shapes are merged by :func:`redact_error_text`.
+    """
+    name: str
+
+    def detect(self, text: str) -> Iterable[Tuple[int, int]]: ...
+
+
+@dataclass(frozen=True)
+class _RegexShape:
+    """A :class:`SecretShape` backed by a single :class:`re.Pattern`."""
+    name: str
+    pattern: "re.Pattern[str]"
+
+    def detect(self, text: str) -> Iterator[Tuple[int, int]]:
+        for match in self.pattern.finditer(text):
+            yield match.span()
+
+
+_DEFAULT_SHAPES: tuple[SecretShape, ...] = (
+    # Anthropic explicit ``sk-ant-`` prefix; listed before the generic
+    # ``sk-`` shape so it wins span-merging when both match.
+    _RegexShape("anthropic_sk_ant",
+                re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
     # OpenAI / Anthropic legacy ``sk-`` prefix.
-    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
-    # Anthropic explicit ``sk-ant-`` prefix (subsumed by the above but
-    # kept explicit to survive future format drift).
-    re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),
-    # OAuth / generic Bearer tokens. ``\S{16,}`` so a stray "Bearer foo"
-    # doesn't trip; real tokens are >=16 non-space chars.
-    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}"),
-    # AWS access key id.
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    # JWT (header.payload.signature).
-    re.compile(
-        r"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
-    ),
-    # Google API key.
-    re.compile(r"AIza[0-9A-Za-z_-]{35}"),
-    # Google OAuth access token.
-    re.compile(r"ya29\.[A-Za-z0-9_-]{20,}"),
+    _RegexShape("openai_sk",
+                re.compile(r"sk-[A-Za-z0-9_-]{20,}")),
+    # OAuth / generic Bearer tokens. Real tokens are >=16 non-space chars
+    # so ``Bearer foo`` doesn't trip the detector.
+    _RegexShape("bearer_token",
+                re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}")),
+    # AWS access key id (AKIA + 16 uppercase alphanumerics).
+    _RegexShape("aws_access_key",
+                re.compile(r"AKIA[0-9A-Z]{16}")),
+    # JWT (header.payload.signature) — three base64url segments.
+    _RegexShape("jwt",
+                re.compile(
+                    r"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+                )),
+    # Google API key (AIza + 35 chars).
+    _RegexShape("gcp_api_key",
+                re.compile(r"AIza[0-9A-Za-z_-]{35}")),
+    # Google OAuth access token (ya29. + 20+ chars).
+    _RegexShape("gcp_oauth",
+                re.compile(r"ya29\.[A-Za-z0-9_-]{20,}")),
 )
 
+_ADAPTER_SHAPES: list[SecretShape] = []
 _ADAPTER_SCRUBBERS: list[Callable[[str], str]] = []
 
 
+def register_secret_shape(shape: SecretShape) -> None:
+    """Register a new structural :class:`SecretShape` detector.
+
+    Detectors are applied in addition to the kernel's defaults BEFORE
+    any legacy scrubber callable (see :func:`register_secret_scrubber`).
+    Registering the same shape instance twice is a no-op. Useful for
+    adapters that recognize a provider-specific token shape and want
+    structural detection rather than ad-hoc string replacement.
+    """
+    if shape in _ADAPTER_SHAPES:
+        return
+    _ADAPTER_SHAPES.append(shape)
+
+
 def register_secret_scrubber(scrubber: Callable[[str], str]) -> None:
-    """Register an adapter-specific secret scrubber.
+    """Register an adapter-specific secret scrubber (legacy API).
 
     ``scrubber`` takes a string and returns the same string with any
     provider-specific secret shapes replaced by a placeholder.
-    Scrubbers are applied in registration order, AFTER the kernel's
-    default patterns. Idempotent: registering the same callable twice
-    is a no-op.
+    Scrubbers are applied in registration order AFTER all
+    :class:`SecretShape` detectors. Idempotent: registering the same
+    callable twice is a no-op.
 
     Adapters call this at module import time so the kernel default
     redactor (:func:`redact_error_text`) picks them up automatically.
     A buggy scrubber that raises is silently skipped — no error path
-    must be allowed to break error-event emission.
+    must be allowed to break error-event emission. Prefer
+    :func:`register_secret_shape` for new code.
     """
     if scrubber in _ADAPTER_SCRUBBERS:
         return
@@ -113,37 +176,77 @@ def register_secret_scrubber(scrubber: Callable[[str], str]) -> None:
 
 
 def clear_secret_scrubbers() -> None:
-    """Remove all adapter-installed scrubbers. Test-only convenience."""
+    """Remove all adapter-installed scrubbers + shapes. Test-only convenience."""
     _ADAPTER_SCRUBBERS.clear()
+    _ADAPTER_SHAPES.clear()
 
 
-_REDACT_PLACEHOLDER = "[redacted-secret]"
+def _collect_spans(text: str,
+                   shapes: Iterable[SecretShape]) -> list[Tuple[int, int]]:
+    """Collect non-overlapping ``(start, end)`` spans across detectors.
+
+    Detectors that raise are skipped (errors must never break the
+    error-emission path). Overlapping or adjacent spans are merged so
+    each replacement renders a single ``[redacted-secret]`` placeholder
+    regardless of how many shapes matched the same text.
+    """
+    spans: list[Tuple[int, int]] = []
+    for shape in shapes:
+        try:
+            for span in shape.detect(text):
+                start, end = span
+                if 0 <= start < end <= len(text):
+                    spans.append((start, end))
+        except Exception:
+            continue
+    if not spans:
+        return spans
+    spans.sort()
+    merged: list[Tuple[int, int]] = [spans[0]]
+    for start, end in spans[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def redact_error_text(s: Any, *, max_chars: int = 500) -> str:
     """Trim and scrub an error-event body string.
 
-    (a) Hard length cap (default 500 chars). (b) Default scrubbers for
-    common API-key / OAuth / JWT / AWS shapes. (c) Adapter-installed
-    scrubbers (see :func:`register_secret_scrubber`).
+    (a) Hard length cap (default 500 chars). (b) Kernel default
+    :class:`SecretShape` detectors plus any adapter-registered shapes
+    (see :func:`register_secret_shape`). (c) Legacy adapter-installed
+    scrubber callables (see :func:`register_secret_scrubber`).
 
-    Applied at the kernel boundary in :func:`stream_end`, :func:`actor_error`,
-    and :func:`journal_error` so a leaky adapter exception is partially
-    defended even before adapter-specific scrubbers run. ``None`` and
-    empty strings pass through as ``""``. Non-string inputs are coerced
-    via ``str(...)`` so a stray exception object cannot fall through.
+    Applied at the kernel boundary in :func:`stream_end`,
+    :func:`actor_error`, and :func:`journal_error` so a leaky adapter
+    exception is partially defended even before adapter-specific
+    scrubbers run. ``None`` and empty strings pass through as ``""``.
+    Non-string inputs are coerced via ``str(...)`` so a stray exception
+    object cannot fall through.
     """
     if not s:
         return ""
     text = s if isinstance(s, str) else str(s)
-    for pat in _SECRET_PATTERNS:
-        text = pat.sub(_REDACT_PLACEHOLDER, text)
+    spans = _collect_spans(
+        text, tuple(_DEFAULT_SHAPES) + tuple(_ADAPTER_SHAPES))
+    if spans:
+        parts: list[str] = []
+        cursor = 0
+        for start, end in spans:
+            parts.append(text[cursor:start])
+            parts.append(_REDACT_PLACEHOLDER)
+            cursor = end
+        parts.append(text[cursor:])
+        text = "".join(parts)
     for scrubber in _ADAPTER_SCRUBBERS:
         try:
             text = scrubber(text)
         except Exception:
             # A buggy scrubber must not break error-path emission. The
-            # default patterns have already run, so partial scrubbing
+            # shape detectors have already run, so partial scrubbing
             # is preserved.
             continue
     if len(text) > max_chars:
@@ -406,6 +509,12 @@ CONTROL_TYPES = frozenset({
     # remains coherent (atomic-rename); only the most-stale queued
     # snapshot was discarded. Surfaces as a degraded-mode signal.
     "snapshot_dropped",
+    # Lease-grant rejection (v0.2). Emitted when a lease-check chain
+    # rejects an :meth:`RoomCoordinator.acquire_lease` request. Carries
+    # ``holder``, ``check_name`` (the failing :class:`LeaseCheck`),
+    # ``deny_reason`` (short structured string), and
+    # ``trigger_event_id`` for observability.
+    "lease_denied",
 })
 
 
@@ -535,20 +644,19 @@ def roles_assigned(roles: dict[str, str]) -> Event:
     return _control("roles_assigned", roles=dict(roles))
 
 
-def floor_updated(*, floor_owner: Optional[list[str]] = None,
-                  wait_for_user: Optional[bool] = None) -> Event:
-    """Emit when room-control floor state changes.
+def floor_updated(*, wait_for_user: Optional[bool] = None) -> Event:
+    """Emit when the cross-turn ``wait_for_user`` flag changes.
 
-    Any subset of fields may be specified; ``None`` means "leave that
-    field unchanged" at replay time. ``floor_owner=[]`` (empty list) is
-    distinct from ``None`` — an empty list clears the floor.
+    Event name preserved for journal back-compat with v0.1.2. Older
+    journal lines that include a ``floor_owner`` body field replay
+    cleanly — :func:`is_known_control` accepts the name and the
+    coordinator silently ignores the removed field (v0.2 dropped
+    ``floor_owner`` from kernel state).
 
     P2.3: ``active_goal`` parameter removed (merged into ``topic``).
     Topic changes flow through the ``topic_changed`` event instead.
     """
     payload: dict = {}
-    if floor_owner is not None:
-        payload["floor_owner"] = list(floor_owner)
     if wait_for_user is not None:
         payload["wait_for_user"] = bool(wait_for_user)
     return _control("floor_updated", **payload)
@@ -556,6 +664,24 @@ def floor_updated(*, floor_owner: Optional[list[str]] = None,
 
 def style_changed(old: str, new: str) -> Event:
     return _control("style_changed", old=old, new=new)
+
+
+def lease_denied(*, holder: str, check_name: str, deny_reason: str,
+                 trigger_event_id: int) -> Event:
+    """Emit when an :meth:`acquire_lease` request is rejected.
+
+    Carries the failing :class:`LeaseCheck` ``check_name`` and a short
+    structured ``deny_reason`` so observability tools can distinguish
+    e.g. ``"throttle_exceeded"`` from ``"speaker_cap_reached"``.
+    Always sender ``"system"``; emitted under ``post_internal``.
+    """
+    return _control(
+        "lease_denied",
+        holder=holder,
+        check_name=check_name,
+        deny_reason=deny_reason,
+        trigger_event_id=int(trigger_event_id),
+    )
 
 
 def journal_error(exception_class: str, message: str) -> Event:

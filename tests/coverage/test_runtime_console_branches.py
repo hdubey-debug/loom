@@ -221,12 +221,14 @@ def test_slash_non_slash_input_unhandled():
         session.stop()
 
 
-def test_slash_who_with_floor_and_roles(tmp_path):
-    """Covers: runtime.py:370-382 — /who output with floor + roles set."""
+def test_slash_who_with_roles(tmp_path):
+    """Covers: runtime.py — /who output with roles set.
+
+    v0.2: ``floor_owner`` was removed; ``/who`` no longer renders it.
+    """
     session = _new_session()
     try:
         session.coordinator.set_roles({"alice": "writer"})
-        session.coordinator.set_floor_owner(["alice"])
         r = handle_slash_command("/who", session)
         assert "members:" in r.message
         assert "alice=writer" in r.message
@@ -485,104 +487,30 @@ def test_slash_roles_assignment_happy_path():
         session.stop()
 
 
-def test_slash_floor_no_args_when_open():
-    """Covers: runtime.py:509-512 — /floor query when open."""
-    session = _new_session()
-    try:
-        r = handle_slash_command("/floor", session)
-        assert "(open)" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_floor_no_args_when_set():
-    """Covers: runtime.py:513-514 — /floor query when set."""
-    session = _new_session()
-    try:
-        session.coordinator.set_floor_owner(["alice"])
-        r = handle_slash_command("/floor", session)
-        assert "alice" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_floor_unknown_participant():
-    """Covers: runtime.py:516-521 — /floor <unknown>."""
-    session = _new_session()
-    try:
-        r = handle_slash_command("/floor ghost", session)
-        assert "unknown participant" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_floor_happy_path():
-    """Covers: runtime.py:522-527 — /floor <known> happy path."""
+def test_slash_floor_returns_removed_notice():
+    """v0.2: /floor, /release, /quiet were removed with the floor_owner field."""
     session = _new_session()
     try:
         r = handle_slash_command("/floor alice", session)
-        assert "floor → alice" in r.message
+        assert "removed in v0.2" in r.message
     finally:
         session.stop()
 
 
-def test_slash_release_when_already_open():
-    """Covers: runtime.py:529-532 — /release when floor already open."""
+def test_slash_release_returns_removed_notice():
     session = _new_session()
     try:
         r = handle_slash_command("/release", session)
-        assert "already open" in r.message
+        assert "removed in v0.2" in r.message
     finally:
         session.stop()
 
 
-def test_slash_release_clears_floor():
-    """Covers: runtime.py:533-534 — /release happy path."""
-    session = _new_session()
-    try:
-        session.coordinator.set_floor_owner(["alice"])
-        r = handle_slash_command("/release", session)
-        assert "released" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_quiet_no_args_returns_usage():
-    """Covers: runtime.py:537-542 — /quiet usage."""
-    session = _new_session()
-    try:
-        r = handle_slash_command("/quiet", session)
-        assert "usage:" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_quiet_unknown_participants():
-    """Covers: runtime.py:543-549 — /quiet <unknown>."""
-    session = _new_session()
-    try:
-        r = handle_slash_command("/quiet ghost", session)
-        assert "unknown participant" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_quiet_silencing_everyone_rejected():
-    """Covers: runtime.py:550-556 — /quiet that silences everyone."""
-    session = _new_session()
-    try:
-        r = handle_slash_command("/quiet alice bob", session)
-        assert "cannot silence every participant" in r.message
-    finally:
-        session.stop()
-
-
-def test_slash_quiet_happy_path():
-    """Covers: runtime.py:557-562 — /quiet <some> happy path."""
+def test_slash_quiet_returns_removed_notice():
     session = _new_session()
     try:
         r = handle_slash_command("/quiet alice", session)
-        assert "silenced alice" in r.message
+        assert "removed in v0.2" in r.message
     finally:
         session.stop()
 
@@ -716,7 +644,7 @@ def test_format_control_unknown_kind_silent():
     events). _format_control falls through to the trailing ``return None``.
     """
     assert _format_control(ev.roles_assigned({"alice": "writer"})) is None
-    assert _format_control(ev.floor_updated(floor_owner=["alice"])) is None
+    assert _format_control(ev.floor_updated(wait_for_user=True)) is None
     assert _format_control(ev.style_changed(old="brief", new="normal")) is None
 
 

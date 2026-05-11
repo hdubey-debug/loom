@@ -237,6 +237,24 @@ def run_streaming_call(
             status = "suppressed"
         elif coordinator.loop_guard.is_idle_dup(lease.holder, cleaned):
             status = "suppressed"
+        else:
+            # v0.2: policy veto hook runs after the kernel's filters
+            # so a policy that returns False can layer additional
+            # suppression (semantic similarity, off-topic, rate limit).
+            # The kernel filters cover the common loop-guard cases;
+            # the policy hook handles policy-specific concerns.
+            policy = getattr(coordinator, "_policy", None)
+            if policy is not None:
+                try:
+                    allowed = policy.should_post_response(
+                        body=cleaned,
+                        state=coordinator.state.view(),
+                        participant_id=lease.holder,
+                    )
+                except Exception:
+                    allowed = True
+                if not allowed:
+                    status = "suppressed"
 
     committed_text: Optional[str] = None
     committed_event_id: Optional[int] = None

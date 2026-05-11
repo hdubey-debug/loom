@@ -12,10 +12,12 @@ Covers:
 """
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
 from loom.kernel.room import (
     ParticipantInfo,
+    ParticipantInfoView,
     RoomConfig,
     RoomControlState,
     RoomState,
@@ -235,12 +237,11 @@ class SlotSetters(unittest.TestCase):
 
 
 class RoomControlStateTests(unittest.TestCase):
-    """Coordinator-owned room control state — roles / floor / wait / style."""
+    """Coordinator-owned room control state — roles / wait / style."""
 
     def test_defaults(self):
         ctl = RoomControlState()
         self.assertEqual(ctl.roles, {})
-        self.assertIsNone(ctl.floor_owner)
         self.assertFalse(ctl.wait_for_user)
         self.assertEqual(ctl.style, "normal")
 
@@ -248,7 +249,6 @@ class RoomControlStateTests(unittest.TestCase):
         s = _state()
         self.assertIsInstance(s.control, RoomControlState)
         self.assertEqual(s.control.style, "normal")
-        self.assertIsNone(s.control.floor_owner)
 
     def test_set_roles_filters_unknown_pids(self):
         s = _state()
@@ -270,33 +270,6 @@ class RoomControlStateTests(unittest.TestCase):
         s.set_roles({"loom": "teacher"})
         s.set_roles({})
         self.assertEqual(s.control.roles, {})
-
-    def test_set_floor_owner(self):
-        s = _state()
-        s.add_participant(ParticipantInfo(id="loom"))
-        s.add_participant(ParticipantInfo(id="claude_code"))
-        s.set_floor_owner(["loom"])
-        self.assertEqual(s.control.floor_owner, ["loom"])
-
-    def test_set_floor_owner_filters_unknown(self):
-        s = _state()
-        s.add_participant(ParticipantInfo(id="loom"))
-        s.set_floor_owner(["loom", "ghost"])
-        self.assertEqual(s.control.floor_owner, ["loom"])
-
-    def test_set_floor_owner_empty_list_opens_floor(self):
-        s = _state()
-        s.add_participant(ParticipantInfo(id="loom"))
-        s.set_floor_owner(["loom"])
-        s.set_floor_owner([])
-        self.assertIsNone(s.control.floor_owner)
-
-    def test_set_floor_owner_none_opens_floor(self):
-        s = _state()
-        s.add_participant(ParticipantInfo(id="loom"))
-        s.set_floor_owner(["loom"])
-        s.set_floor_owner(None)
-        self.assertIsNone(s.control.floor_owner)
 
     def test_set_wait_for_user_toggles(self):
         s = _state()
@@ -329,11 +302,9 @@ class RoomControlStateTests(unittest.TestCase):
         s.add_participant(ParticipantInfo(id="loom"))
         before = s.room_epoch
         s.set_roles({"loom": "teacher"})
-        s.set_floor_owner(["loom"])
         s.set_style("brief")
         s.set_wait_for_user(True)
         s.set_topic("X")
-        s.set_turn_taking_mode("round_robin")
         s.set_turn_order(["loom"])
         s.advance_round_robin_pointer()
         # Only the participant add should have bumped epoch — the
@@ -342,7 +313,7 @@ class RoomControlStateTests(unittest.TestCase):
 
 
 class TurnTakingModeTests(unittest.TestCase):
-    """Round-robin mode setter, turn order, rotation pointer."""
+    """Round-robin mode signalled by a non-empty turn_order; rotation pointer."""
 
     def _state_with(self, *ids: str) -> RoomState:
         s = _state()
@@ -351,30 +322,25 @@ class TurnTakingModeTests(unittest.TestCase):
         return s
 
     def test_default_is_broadcast(self):
+        # An empty ``turn_order`` is the broadcast (default) signal.
         s = self._state_with("a", "b")
-        self.assertEqual(s.control.turn_taking_mode, "broadcast")
         self.assertEqual(s.control.turn_order, [])
         self.assertEqual(s.control.next_speaker_idx, 0)
 
-    def test_set_turn_taking_mode_round_robin(self):
+    def test_set_turn_order_arms_round_robin(self):
+        # A non-empty turn_order arms round-robin without a separate enum.
         s = self._state_with("a", "b")
-        old = s.set_turn_taking_mode("round_robin")
-        self.assertEqual(old, "broadcast")
-        self.assertEqual(s.control.turn_taking_mode, "round_robin")
+        s.set_turn_order(["a", "b"])
+        self.assertEqual(s.control.turn_order, ["a", "b"])
 
-    def test_set_turn_taking_mode_back_to_broadcast_clears_order(self):
+    def test_clear_turn_order_exits_round_robin(self):
+        # Clearing turn_order (set to []) returns to broadcast.
         s = self._state_with("a", "b")
-        s.set_turn_taking_mode("round_robin")
         s.set_turn_order(["a", "b"])
         s.control.next_speaker_idx = 1
-        s.set_turn_taking_mode("broadcast")
+        s.set_turn_order([])
         self.assertEqual(s.control.turn_order, [])
         self.assertEqual(s.control.next_speaker_idx, 0)
-
-    def test_set_turn_taking_mode_invalid_raises(self):
-        s = self._state_with("a")
-        with self.assertRaises(ValueError):
-            s.set_turn_taking_mode("debate")
 
     def test_set_turn_order_filters_unknown(self):
         s = self._state_with("a", "b")
@@ -410,6 +376,53 @@ class TurnTakingModeTests(unittest.TestCase):
         s.set_turn_order(["a"])
         s.set_active("a", False)
         self.assertEqual(s.advance_round_robin_pointer(), 0)
+
+
+class ParticipantInfoViewIsFrozen(unittest.TestCase):
+    """Closes Session 1 invariant 15 soft leak.
+
+    The view's ``participants`` map yields ``ParticipantInfoView``
+    instances; field reassignment must raise ``FrozenInstanceError``
+    and ``role_hints`` must refuse mutation.
+    """
+
+    def test_attribute_reassignment_raises(self):
+        state = RoomState(config=RoomConfig())
+        state.add_participant(ParticipantInfo(id="a", capable=True,
+                                              cost_tier=1, active=True))
+        view = state.view()
+        info_view = view.participants["a"]
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            info_view.active = False  # type: ignore[misc]
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            info_view.capable = False  # type: ignore[misc]
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            info_view.cost_tier = 99  # type: ignore[misc]
+
+    def test_role_hints_mapping_is_read_only(self):
+        state = RoomState(config=RoomConfig())
+        state.add_participant(ParticipantInfo(id="a",
+                                              role_hints={"role": "teacher"}))
+        view = state.view()
+        info_view = view.participants["a"]
+        with self.assertRaises(TypeError):
+            info_view.role_hints["role"] = "student"  # type: ignore[index]
+
+    def test_view_field_set_mirrors_participant_info(self):
+        info_fields = {f.name for f in dataclasses.fields(ParticipantInfo)}
+        view_fields = {f.name for f in dataclasses.fields(ParticipantInfoView)}
+        self.assertEqual(info_fields, view_fields)
+
+    def test_view_snapshots_participant_at_call(self):
+        # Views taken BEFORE a mutation reflect the prior state; a
+        # fresh view() after the mutation reflects the new state.
+        state = RoomState(config=RoomConfig())
+        state.add_participant(ParticipantInfo(id="a", active=True))
+        view_before = state.view()
+        state.set_active("a", False)
+        view_after = state.view()
+        self.assertTrue(view_before.participants["a"].active)
+        self.assertFalse(view_after.participants["a"].active)
 
 
 if __name__ == "__main__":

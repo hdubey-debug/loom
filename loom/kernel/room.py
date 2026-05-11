@@ -17,12 +17,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Mapping, Optional, Tuple
+from typing import Any, Literal, Mapping, Optional, Tuple
 
 
 StyleLevel = Literal["brief", "normal", "detailed"]
-
-TurnTakingMode = Literal["broadcast", "round_robin"]
 
 
 @dataclass(frozen=True)
@@ -44,6 +42,25 @@ class RoomConfig:
     pass_buffer_chars: int = 16
     lease_ttl_s: int = 60
     max_drafts_per_participant: int = 1
+    # v0.2: cadence (seconds) of the coordinator's dedicated watchdog
+    # thread that fires ``check_idle_timeout`` periodically without
+    # piggybacking on actor wakeups. Default 5s — small enough to keep
+    # idle timeouts responsive at the configured 20s default, large
+    # enough to stay cheap at scale.
+    watchdog_interval_s: float = 5.0
+    # v0.2: optional override for the actor's trigger-priority hook.
+    # ``None`` (default) means "use the kernel's
+    # :data:`loom.kernel.actor.DEFAULT_TRIGGER_PRIORITY`". A custom
+    # callable with the same signature
+    # (``loom.contracts.TriggerPriorityFn``) lets advanced consumers
+    # invert priorities or add new classes.
+    trigger_priority: Optional[Any] = None
+    # v0.2: tuple of :class:`loom.contracts.LeaseCheck` instances that
+    # gate :meth:`RoomCoordinator.acquire_lease`. Empty tuple (the
+    # default) means "use the kernel's built-in 8-step chain"; passing
+    # a non-empty tuple lets advanced consumers prepend, append, or
+    # replace gates. Each gate emits ``lease_denied`` on rejection.
+    lease_checks: tuple[Any, ...] = ()
 
 
 @dataclass
@@ -62,35 +79,26 @@ class RoomControlState:
       nobody has a role. Rendered into every selected speaker's
       TurnCard so a role assignment sticks across turns without each
       agent needing to re-derive it from the transcript.
-    - ``floor_owner``   ``None`` means the floor is open (broadcast
-      default). A non-empty list narrows ``allowed_speakers`` to that
-      set on every subsequent classification, until cleared.
     - ``wait_for_user`` set to ``True`` after a UserTurn closes with
       ``wait_for_user_after``; the next user post is required before
       any agent draft. Cleared automatically when the user posts.
     - ``style``         ``"brief"`` / ``"normal"`` / ``"detailed"`` — a
       brevity preference that persists across turns. Renders as a max-
       length hint into every TurnCard.
-    - ``turn_taking_mode`` ``"broadcast"`` (default) means every active
-      capable participant is eligible per turn; ``"round_robin"`` means
-      the interpreter routes each non-mention user post to a single
-      rotating speaker. Auto-enabled when the interpreter detects a
-      game-start phrase ("let's play a game", "20 questions", etc.) and
-      auto-disabled by an explicit end phrase ("good game", "let's
-      stop", "new topic"). The user never toggles this directly.
     - ``turn_order``    ordered list of participant ids consulted in
-      ``round_robin`` mode. Set when the mode is entered (typically
-      ``sorted(active_capable)``). Stale ids (removed participants) are
+      round-robin mode. Empty means broadcast (every active capable
+      participant is eligible per turn); non-empty means the
+      interpreter routes each non-mention user post to a single
+      rotating speaker. The list itself is the mode signal — there is
+      no separate enum field. Stale ids (removed participants) are
       filtered at read time, not pruned eagerly.
     - ``next_speaker_idx`` rotation pointer into ``turn_order``;
       advanced on UserTurn close when the closed plan came from the
       rotation (not from an @-mention or vocative override).
     """
     roles: dict[str, str] = field(default_factory=dict)
-    floor_owner: Optional[list[str]] = None
     wait_for_user: bool = False
     style: StyleLevel = "normal"
-    turn_taking_mode: TurnTakingMode = "broadcast"
     turn_order: list[str] = field(default_factory=list)
     next_speaker_idx: int = 0
 
@@ -116,6 +124,22 @@ class ParticipantInfo:
     cost_tier: int = 0
     active: bool = True
     role_hints: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParticipantInfoView:
+    """Read-only view of :class:`ParticipantInfo` handed to policies.
+
+    Mirrors every public field of :class:`ParticipantInfo`. ``frozen=True``
+    refuses attribute reassignment; ``role_hints`` is wrapped in a
+    :class:`MappingProxyType` so policies cannot mutate it either.
+    Constructed by :meth:`RoomState.view`; never instantiated directly.
+    """
+    id: str
+    capable: bool
+    cost_tier: int
+    active: bool
+    role_hints: Mapping[str, object]
 
 
 @dataclass
@@ -279,26 +303,6 @@ class RoomState:
         self.control.roles = clean
         return old
 
-    def set_floor_owner(self,
-                        floor_owner: Optional[list[str]]) -> Optional[list[str]]:
-        """Set the floor owner list. Returns the previous value.
-
-        ``None`` opens the floor (broadcast default). An empty list also
-        opens the floor — for simplicity an empty floor is treated as
-        no-floor. A non-empty list narrows ``allowed_speakers`` for
-        every subsequent user post until cleared.
-        """
-        old = (list(self.control.floor_owner)
-               if self.control.floor_owner is not None else None)
-        if not floor_owner:
-            self.control.floor_owner = None
-        else:
-            self.control.floor_owner = [pid for pid in floor_owner
-                                        if pid in self.participants]
-            if not self.control.floor_owner:
-                self.control.floor_owner = None
-        return old
-
     def set_wait_for_user(self, wait: bool) -> bool:
         old = self.control.wait_for_user
         self.control.wait_for_user = bool(wait)
@@ -309,23 +313,6 @@ class RoomState:
         if style not in ("brief", "normal", "detailed"):
             raise ValueError(f"unknown style: {style!r}")
         self.control.style = style
-        return old
-
-    def set_turn_taking_mode(self, mode: TurnTakingMode) -> TurnTakingMode:
-        """Switch ``"broadcast"`` ↔ ``"round_robin"``. Returns prior mode.
-
-        Switching out of ``round_robin`` clears the rotation pointer and
-        the turn order so a re-entry starts fresh. The interpreter is
-        what decides *when* to switch (game-start / game-end phrases);
-        this setter just performs the transition.
-        """
-        if mode not in ("broadcast", "round_robin"):
-            raise ValueError(f"unknown turn_taking_mode: {mode!r}")
-        old = self.control.turn_taking_mode
-        self.control.turn_taking_mode = mode
-        if mode == "broadcast":
-            self.control.turn_order = []
-            self.control.next_speaker_idx = 0
         return old
 
     def set_turn_order(self, order: list[str]) -> list[str]:
@@ -372,17 +359,27 @@ class RoomState:
         (``plan_user_turn`` / ``system_prompt`` / ``role_prompt``)
         without exposing setters or the live mutable container.
 
-        Cheap to call — wraps the existing dicts/lists in immutable
-        proxies; does not deep-copy. Mutations to the underlying
-        ``RoomState`` after the view is taken *are* visible through
-        the view (it's a live read-only window, not a snapshot copy).
-        Callers that need a frozen point-in-time copy should call
-        ``view()`` and serialize/copy what they need.
+        Cheap to call. Top-level scalar fields (``room_epoch``,
+        ``topic``, slot ids) and tuple/proxy collections capture the
+        state as of the call. Per-participant ``ParticipantInfoView``
+        entries are constructed at call time, so adding/removing a
+        participant *after* ``view()`` is not reflected in that view;
+        callers needing a fresh snapshot must call ``view()`` again.
         """
+        participants_view = {
+            pid: ParticipantInfoView(
+                id=info.id,
+                capable=info.capable,
+                cost_tier=info.cost_tier,
+                active=info.active,
+                role_hints=MappingProxyType(info.role_hints),
+            )
+            for pid, info in self.participants.items()
+        }
         return RoomStateView(
             room_epoch=self.room_epoch,
             topic=self.topic,
-            participants=MappingProxyType(self.participants),
+            participants=MappingProxyType(participants_view),
             anchor_id=self.anchor_id,
             chair_id=self.chair_id,
             default_responder_id=self.default_responder_id,
@@ -391,12 +388,8 @@ class RoomState:
             last_compacted_event_id=self.last_compacted_event_id,
             control=RoomControlStateView(
                 roles=MappingProxyType(self.control.roles),
-                floor_owner=(tuple(self.control.floor_owner)
-                             if self.control.floor_owner is not None
-                             else None),
                 wait_for_user=self.control.wait_for_user,
                 style=self.control.style,
-                turn_taking_mode=self.control.turn_taking_mode,
                 turn_order=tuple(self.control.turn_order),
                 next_speaker_idx=self.control.next_speaker_idx,
             ),
@@ -416,10 +409,8 @@ class RoomControlStateView:
     :meth:`RoomState.view`, never directly.
     """
     roles: Mapping[str, str]
-    floor_owner: Optional[Tuple[str, ...]]
     wait_for_user: bool
     style: StyleLevel
-    turn_taking_mode: TurnTakingMode
     turn_order: Tuple[str, ...]
     next_speaker_idx: int
 
@@ -428,24 +419,16 @@ class RoomControlStateView:
 class RoomStateView:
     """Read-only view of :class:`RoomState` for policy callbacks.
 
-    What's read-only:
+    Fully deep-frozen:
 
     - The view itself (``frozen=True``) cannot have its top-level fields
       reassigned.
-    - ``participants`` is a :class:`MappingProxyType`; ``view.participants["x"] = ...``
-      raises ``TypeError``.
-    - ``control.roles`` is a :class:`MappingProxyType`; same protection.
-    - ``control.turn_order`` and ``control.floor_owner`` are tuples;
-      ``.append`` / index-assignment raise.
-
-    What's *not* read-only (known soft leak, full deep freeze deferred
-    to v0.2 with ``ParticipantInfoView``):
-
-    - The :class:`ParticipantInfo` values inside ``participants`` are
-      still mutable dataclasses. A policy that captures one and writes
-      ``info.active = False`` will mutate live state. The boundary
-      grep + import-asymmetry test catches this in practice; the deep
-      view is on the v0.2 list.
+    - ``participants`` is a :class:`MappingProxyType` whose values are
+      :class:`ParticipantInfoView` instances (also ``frozen=True``),
+      with ``role_hints`` itself wrapped in :class:`MappingProxyType`.
+    - ``control.roles`` is a :class:`MappingProxyType`.
+    - ``control.turn_order`` is a tuple; ``.append`` /
+      index-assignment raise.
 
     Read access (``view.participants["loom"].cost_tier``,
     ``view.control.turn_order``) is the supported path. Anything beyond
@@ -453,7 +436,7 @@ class RoomStateView:
     """
     room_epoch: int
     topic: Optional[str]
-    participants: Mapping[str, ParticipantInfo]
+    participants: Mapping[str, ParticipantInfoView]
     anchor_id: Optional[str]
     chair_id: Optional[str]
     default_responder_id: Optional[str]

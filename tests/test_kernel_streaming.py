@@ -439,5 +439,72 @@ class ChairSpeakStrip(unittest.TestCase):
         )
 
 
+class ShouldPostResponseHook(unittest.TestCase):
+    """v0.2 ``ConversationPolicy.should_post_response`` veto hook."""
+
+    def _stub_policy(self, allow_fn):
+        from loom.contracts import ConversationPolicy
+        from loom.kernel.obligations import plan_for_default
+
+        class _Stub(ConversationPolicy):
+            name = "stub"
+            def plan_user_turn(self, user_event, state):
+                return plan_for_default(
+                    "loom", reason="fallback",
+                    target_event_ids=[user_event.id])
+            def should_post_response(self, *, body, state, participant_id):
+                return allow_fn(body, participant_id)
+        return _Stub()
+
+    def _setup_with_policy(self, policy):
+        bus = MessageBus()
+        state = RoomState(config=RoomConfig(
+            pass_buffer_chars=16, lease_ttl_s=60,
+        ))
+        for i, pid in enumerate(("loom", "claude_code")):
+            state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
+        state.set_default_responder("loom")
+        coord = RoomCoordinator(bus, state, policy=policy)
+        user_event = ev.chat(sender="user", body="hi")
+        bus.post(user_event)
+        from loom.kernel.obligations import plan_for_default as _pfd
+        plan = _pfd("loom", reason="fallback",
+                    target_event_ids=[user_event.id])
+        coord.open_user_turn(user_event, plan)
+        lease = coord.acquire_lease("loom", user_event.id)
+        return bus, coord, lease
+
+    def test_default_returns_true_does_not_suppress(self):
+        # Policy without overriding should_post_response → default True.
+        policy = self._stub_policy(lambda body, pid: True)
+        bus, coord, lease = self._setup_with_policy(policy)
+        proxy = FakeProxy(["A long enough clean reply to commit."])
+        run_streaming_call(proxy, "<prompt>", lease, bus, coord)
+        chats = _chat_events(bus)
+        self.assertEqual(len(chats), 1)
+
+    def test_returning_false_suppresses_response(self):
+        policy = self._stub_policy(lambda body, pid: False)
+        bus, coord, lease = self._setup_with_policy(policy)
+        proxy = FakeProxy(["A long enough clean reply that gets vetoed."])
+        run_streaming_call(proxy, "<prompt>", lease, bus, coord)
+        chats = _chat_events(bus)
+        self.assertEqual(len(chats), 0)
+        # stream_end status is suppressed.
+        sevs = [e for e in bus.snapshot() if e.kind == "stream"]
+        self.assertEqual(sevs[-1].body["status"], "suppressed")
+
+    def test_buggy_hook_falls_through_to_commit(self):
+        def _raises(_body, _pid):
+            raise RuntimeError("boom")
+        policy = self._stub_policy(_raises)
+        bus, coord, lease = self._setup_with_policy(policy)
+        proxy = FakeProxy(["A long enough clean reply to commit."])
+        run_streaming_call(proxy, "<prompt>", lease, bus, coord)
+        # Buggy hook is treated as ``allowed=True`` so the response commits.
+        chats = _chat_events(bus)
+        self.assertEqual(len(chats), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,8 +22,8 @@ Use the raw :class:`loom.contracts.ConversationPolicy` ABC when:
 - You need different routing per case (vocative vs broadcast vs
   game-mode) — see :class:`loom.policy.default.DefaultPolicy`.
 - You set ``allowed_speakers`` to a strict superset of responders, or
-  emit declarative control-state changes
-  (``set_turn_taking_mode`` / ``set_floor_owner`` / etc.) on the plan.
+  emit declarative control-state changes (``set_turn_order``,
+  ``advance_turn_pointer``) on the plan.
 
 Hook overview (override what you need):
 

@@ -8,6 +8,7 @@ from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.coordinator import (
     BudgetConfig,
+    DEFAULT_LEASE_CHECKS,
     LoopGuardConfig,
     RoomCoordinator,
     ThrottleConfig,
@@ -746,6 +747,292 @@ class DeadLetterTransfer(unittest.TestCase):
         self.assertEqual(ut.state, "closed")
 
 
+class DeadLetterPolicyHook(unittest.TestCase):
+    """v0.2 ``ConversationPolicy.dead_letter_target`` hook.
+
+    The kernel calls the hook on the coordinator's registered policy
+    to pick a reroute target. Default behavior (no policy registered,
+    or policy returning ``None``) preserves the v0.1.2 chain:
+    default-responder slot, then cheapest active capable.
+    """
+
+    def _stub_policy(self, target_fn):
+        from loom.contracts import ConversationPolicy
+        from loom.kernel.obligations import plan_for_acknowledgement
+
+        class _Stub(ConversationPolicy):
+            name = "stub"
+            def plan_user_turn(self, user_event, state):
+                return plan_for_acknowledgement(
+                    target_event_ids=[user_event.id])
+            def dead_letter_target(self, *, state, removed_participant):
+                return target_fn(state, removed_participant)
+        return _Stub()
+
+    def _setup_with_policy(self, policy):
+        bus = MessageBus()
+        state = RoomState(config=RoomConfig())
+        for i, pid in enumerate(("loom", "claude_code", "gemini_cli")):
+            state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
+        state.set_default_responder("loom")
+        c = RoomCoordinator(bus, state, policy=policy)
+        return bus, state, c
+
+    def test_default_chain_when_no_policy_wired(self):
+        # Coordinator without a policy → kernel default behavior.
+        bus, state, c = _setup(default_responder="loom")
+        e = _user_post(bus, "@claude_code", addressees=["claude_code"])
+        _open_with(c, e, required=("claude_code",),
+                   routing_case="direct_mention")
+        c.unregister_participant("claude_code")
+        dl = [x for x in bus.snapshot()
+              if ev.control_type_of(x) == "dead_letter"]
+        self.assertEqual(len(dl), 1)
+        self.assertEqual(dl[0].body["reroute_to"], "loom")
+
+    def test_policy_hook_overrides_kernel_default(self):
+        # Policy returns a non-default pid → kernel uses it.
+        policy = self._stub_policy(lambda _state, _pid: "gemini_cli")
+        bus, state, c = self._setup_with_policy(policy)
+        e = ev.chat(sender="user", body="@claude_code",
+                    addressees=["claude_code"])
+        bus.post(e)
+        _open_with(c, e, required=("claude_code",),
+                   routing_case="direct_mention")
+        c.unregister_participant("claude_code")
+        dl = [x for x in bus.snapshot()
+              if ev.control_type_of(x) == "dead_letter"]
+        self.assertEqual(len(dl), 1)
+        self.assertEqual(dl[0].body["reroute_to"], "gemini_cli")
+
+    def test_policy_hook_can_return_none_to_drop_mention(self):
+        # Policy returns None → dead_letter event still emits, but
+        # reroute_to is None (no fallback).
+        policy = self._stub_policy(lambda _state, _pid: None)
+        bus, state, c = self._setup_with_policy(policy)
+        e = ev.chat(sender="user", body="@claude_code",
+                    addressees=["claude_code"])
+        bus.post(e)
+        _open_with(c, e, required=("claude_code",),
+                   routing_case="direct_mention")
+        c.unregister_participant("claude_code")
+        dl = [x for x in bus.snapshot()
+              if ev.control_type_of(x) == "dead_letter"]
+        self.assertEqual(len(dl), 1)
+        self.assertIsNone(dl[0].body["reroute_to"])
+
+    def test_buggy_policy_hook_falls_back_to_kernel_default(self):
+        # A hook that raises must not break dead-letter emission.
+        def _raises(_state, _pid):
+            raise RuntimeError("boom")
+        policy = self._stub_policy(_raises)
+        bus, state, c = self._setup_with_policy(policy)
+        e = ev.chat(sender="user", body="@claude_code",
+                    addressees=["claude_code"])
+        bus.post(e)
+        _open_with(c, e, required=("claude_code",),
+                   routing_case="direct_mention")
+        c.unregister_participant("claude_code")
+        dl = [x for x in bus.snapshot()
+              if ev.control_type_of(x) == "dead_letter"]
+        self.assertEqual(len(dl), 1)
+        # Falls back to the kernel-default chain (default-responder slot).
+        self.assertEqual(dl[0].body["reroute_to"], "loom")
+
+
+class LeaseCheckChain(unittest.TestCase):
+    """v0.2 extensible :class:`LeaseCheck` chain in ``RoomConfig.lease_checks``.
+
+    The kernel's eight built-in gates ship as ``DEFAULT_LEASE_CHECKS``;
+    consumers can extend, replace, or reorder them. Every rejected
+    lease emits a ``lease_denied`` control event carrying the failing
+    check's name and a structured ``deny_reason``.
+    """
+
+    def _make(self, *, checks=None, default_responder="loom"):
+        bus = MessageBus()
+        cfg = RoomConfig(lease_checks=checks) if checks is not None \
+            else RoomConfig()
+        state = RoomState(config=cfg)
+        for i, pid in enumerate(("loom", "claude_code")):
+            state.add_participant(ParticipantInfo(id=pid, cost_tier=i))
+        state.set_default_responder(default_responder)
+        c = RoomCoordinator(bus, state)
+        return bus, state, c
+
+    def _lease_denied(self, bus):
+        return [x for x in bus.snapshot()
+                if ev.control_type_of(x) == "lease_denied"]
+
+    def test_default_chain_grants_lease_for_valid_call(self):
+        bus, state, c = self._make()
+        e = _user_post(bus, "@loom hello", addressees=["loom"])
+        _open_with(c, e, required=("loom",),
+                   routing_case="direct_mention")
+        lease = c.acquire_lease("loom", e.id, is_direct_mention=True)
+        self.assertIsNotNone(lease)
+        self.assertEqual(self._lease_denied(bus), [])
+
+    def test_no_open_turn_emits_lease_denied(self):
+        bus, state, c = self._make()
+        lease = c.acquire_lease("loom", 0)
+        self.assertIsNone(lease)
+        denied = self._lease_denied(bus)
+        self.assertEqual(len(denied), 1)
+        self.assertEqual(denied[0].body["check_name"], "open_turn")
+        self.assertEqual(denied[0].body["deny_reason"], "no_open_user_turn")
+        self.assertEqual(denied[0].body["holder"], "loom")
+
+    def test_unknown_participant_emits_lease_denied(self):
+        bus, state, c = self._make()
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        c.acquire_lease("ghost", e.id)
+        denied = self._lease_denied(bus)
+        self.assertEqual(len(denied), 1)
+        self.assertEqual(denied[0].body["check_name"],
+                         "participant_registered")
+        self.assertEqual(denied[0].body["deny_reason"],
+                         "unknown_participant")
+
+    def test_inactive_participant_emits_lease_denied(self):
+        bus, state, c = self._make()
+        state.set_active("loom", False)
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        c.acquire_lease("loom", e.id)
+        denied = self._lease_denied(bus)
+        # Inactive triggers BOTH allowed-speakers gate (no obligation
+        # path) and participant-active. The first failing check wins.
+        self.assertEqual(denied[0].body["check_name"],
+                         "participant_active")
+
+    def test_custom_check_appended_can_reject(self):
+        # Custom check that always denies — appended to the default chain.
+        class _AlwaysDeny:
+            name = "always_deny"
+            def check(self, *, holder, trigger_event_id, is_direct_mention,
+                      coordinator):
+                from loom.contracts import LeaseCheckResult
+                return LeaseCheckResult(False, "custom_rule")
+        custom_chain = DEFAULT_LEASE_CHECKS + (_AlwaysDeny(),)
+        bus, state, c = self._make(checks=custom_chain)
+        e = _user_post(bus, "@loom", addressees=["loom"])
+        _open_with(c, e, required=("loom",),
+                   routing_case="direct_mention")
+        lease = c.acquire_lease("loom", e.id, is_direct_mention=True)
+        self.assertIsNone(lease)
+        denied = self._lease_denied(bus)
+        self.assertEqual(len(denied), 1)
+        self.assertEqual(denied[0].body["check_name"], "always_deny")
+        self.assertEqual(denied[0].body["deny_reason"], "custom_rule")
+
+    def test_buggy_check_treated_as_denial(self):
+        class _Raises:
+            name = "raises"
+            def check(self, *, holder, trigger_event_id, is_direct_mention,
+                      coordinator):
+                raise RuntimeError("boom")
+        custom_chain = (_Raises(),) + DEFAULT_LEASE_CHECKS
+        bus, state, c = self._make(checks=custom_chain)
+        e = _user_post(bus, "@loom", addressees=["loom"])
+        _open_with(c, e, required=("loom",),
+                   routing_case="direct_mention")
+        lease = c.acquire_lease("loom", e.id, is_direct_mention=True)
+        self.assertIsNone(lease)
+        denied = self._lease_denied(bus)
+        self.assertEqual(denied[0].body["check_name"], "raises")
+        self.assertTrue(
+            denied[0].body["deny_reason"].startswith("check_raised:"))
+
+    def test_max_responses_deny_reason(self):
+        # Cap=1 plan with two obligated speakers. The first
+        # acquire_lease succeeds (lease outstanding); the second hits
+        # the cap because committed+outstanding == cap_max.
+        bus, state, c = self._make()
+        e = _user_post(bus, "hi")
+        plan = plan_with_required(
+            ["loom", "claude_code"], routing_case="multi_opinion",
+            target_event_ids=[e.id], reason="multi",
+            allowed_speakers={"loom", "claude_code"}, max_responses=1,
+        )
+        c.open_user_turn(e, plan)
+        lease1 = c.acquire_lease("loom", e.id)
+        self.assertIsNotNone(lease1)
+        # The turn is still open (loom hasn't committed). claude_code's
+        # acquire is denied by the max_responses gate (committed=0 +
+        # outstanding=1 == cap_max=1).
+        lease2 = c.acquire_lease("claude_code", e.id)
+        self.assertIsNone(lease2)
+        denied = self._lease_denied(bus)
+        self.assertEqual(denied[-1].body["check_name"], "max_responses")
+        self.assertEqual(denied[-1].body["deny_reason"],
+                         "max_responses_reached")
+
+
+class WatchdogThreadLifecycle(unittest.TestCase):
+    """v0.2 dedicated watchdog thread on :class:`RoomCoordinator`."""
+
+    def test_start_stop_is_idempotent(self):
+        bus, state, c = _setup()
+        # Double start is a no-op.
+        c.start_watchdog()
+        first = c._watchdog_thread
+        c.start_watchdog()
+        self.assertIs(c._watchdog_thread, first)
+        self.assertTrue(first.is_alive())
+        # Double stop cleans up cleanly.
+        c.stop_watchdog(timeout=2.0)
+        self.assertFalse(first.is_alive())
+        c.stop_watchdog(timeout=2.0)
+        self.assertIsNone(c._watchdog_thread)
+
+    def test_watchdog_fires_check_idle_timeout(self):
+        # Wire a tiny interval and a stub coordinator method; confirm
+        # the watchdog thread invokes it at least once.
+        import time as _time
+        bus = MessageBus()
+        cfg = RoomConfig(watchdog_interval_s=0.05)
+        state = RoomState(config=cfg)
+        state.add_participant(ParticipantInfo(id="loom"))
+        c = RoomCoordinator(bus, state)
+        ticks = []
+        orig = c.check_idle_timeout
+
+        def _spy(**kwargs):
+            ticks.append(_time.monotonic())
+            return orig(**kwargs)
+
+        c.check_idle_timeout = _spy  # type: ignore[method-assign]
+        c.start_watchdog()
+        _time.sleep(0.25)
+        c.stop_watchdog(timeout=2.0)
+        # At least 2 ticks within 250ms at 50ms cadence.
+        self.assertGreaterEqual(len(ticks), 2)
+
+    def test_watchdog_swallows_exceptions(self):
+        # A bad check_idle_timeout must not crash the watchdog thread.
+        import time as _time
+        bus = MessageBus()
+        cfg = RoomConfig(watchdog_interval_s=0.05)
+        state = RoomState(config=cfg)
+        state.add_participant(ParticipantInfo(id="loom"))
+        c = RoomCoordinator(bus, state)
+        calls = []
+
+        def _bad(**kwargs):
+            calls.append(None)
+            raise RuntimeError("boom")
+
+        c.check_idle_timeout = _bad  # type: ignore[method-assign]
+        c.start_watchdog()
+        _time.sleep(0.2)
+        # Thread should still be alive despite repeated exceptions.
+        self.assertTrue(c._watchdog_thread.is_alive())
+        c.stop_watchdog(timeout=2.0)
+        self.assertGreaterEqual(len(calls), 2)
+
+
 # ---------------------------------------------------------------------------
 # Skip handling
 # ---------------------------------------------------------------------------
@@ -797,22 +1084,26 @@ class RoomControlSetters(unittest.TestCase):
                      if ev.control_type_of(e) == "roles_assigned"])
         self.assertEqual(before, after)
 
-    def test_set_floor_owner_emits_floor_updated(self):
+    def test_set_wait_for_user_flag_emits_floor_updated(self):
+        # v0.2: ``set_floor_owner`` removed along with the
+        # ``floor_owner`` field. ``set_wait_for_user_flag`` emits the
+        # surviving ``floor_updated`` event (kept under the legacy name
+        # for journal back-compat) carrying only ``wait_for_user``.
         bus, state, c = _setup()
-        c.set_floor_owner(["loom"])
+        c.set_wait_for_user_flag(True)
         events = [e for e in bus.snapshot()
                   if ev.control_type_of(e) == "floor_updated"]
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].body["floor_owner"], ["loom"])
+        self.assertTrue(events[0].body["wait_for_user"])
+        self.assertNotIn("floor_owner", events[0].body)
 
-    def test_clear_floor_emits_empty_list(self):
+    def test_set_wait_for_user_flag_idempotent(self):
         bus, state, c = _setup()
-        c.set_floor_owner(["loom"])
-        c.set_floor_owner(None)
+        c.set_wait_for_user_flag(True)
+        c.set_wait_for_user_flag(True)  # no change → no event
         events = [e for e in bus.snapshot()
                   if ev.control_type_of(e) == "floor_updated"]
-        # Two events: set then clear. Clear carries floor_owner=[].
-        self.assertEqual(events[-1].body["floor_owner"], [])
+        self.assertEqual(len(events), 1)
 
     def test_set_style_emits_event(self):
         bus, state, c = _setup()
@@ -822,14 +1113,6 @@ class RoomControlSetters(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].body["new"], "brief")
         self.assertEqual(state.control.style, "brief")
-
-    def test_floor_set_emits_floor_updated(self):
-        # P2.3: ``active_goal`` parameter removed from set_floor_owner.
-        # Topic now flows through ``set_topic``; this test now verifies
-        # only the floor side of the call.
-        bus, state, c = _setup()
-        c.set_floor_owner(["loom"])
-        self.assertEqual(state.control.floor_owner, ["loom"])
 
 
 class AllowedSpeakersGate(unittest.TestCase):
@@ -1104,45 +1387,41 @@ class WaitForUserAfter(unittest.TestCase):
 
 
 class RoundRobinPlanHooks(unittest.TestCase):
-    """``set_turn_taking_mode`` / ``set_turn_order`` / ``advance_turn_pointer``
-    on :class:`UserTurnPlan` propagate through the coordinator."""
+    """``set_turn_order`` / ``advance_turn_pointer`` on :class:`UserTurnPlan`
+    propagate through the coordinator. Non-empty ``turn_order`` is the
+    round-robin mode signal."""
 
-    def test_set_turn_taking_mode_applies_on_open(self):
+    def test_set_turn_order_arms_round_robin_on_open(self):
         bus, state, c = _setup()
         e = _user_post(bus, "lets play")
         plan = plan_with_required(
             ["loom", "claude_code", "gemini_cli"],
             routing_case="multi_opinion",
             target_event_ids=[e.id], reason="game_start",
-            set_turn_taking_mode="round_robin",
             set_turn_order=["loom", "claude_code", "gemini_cli"],
         )
         c.post_user_event_and_open_turn(_user_post(bus, "lets play"),
                                         lambda _e: plan)
-        self.assertEqual(state.control.turn_taking_mode, "round_robin")
+        # Non-empty turn_order signals round-robin is active.
         self.assertEqual(state.control.turn_order,
                          ["loom", "claude_code", "gemini_cli"])
 
-    def test_set_turn_taking_mode_applies_on_acknowledgement(self):
+    def test_clear_turn_order_applies_on_acknowledgement(self):
         # Game-end phrase: plan is acknowledgement (no turn) but still
-        # carries a mode flip back to broadcast.
+        # clears the rotation back to broadcast.
         bus, state, c = _setup()
-        state.set_turn_taking_mode("round_robin")
         state.set_turn_order(["loom", "claude_code"])
         plan = plan_for_acknowledgement(target_event_ids=[],
                                         rationale="game-end")
-        plan.set_turn_taking_mode = "broadcast"
         plan.set_turn_order = []
         e = _user_post(bus, "good game")
         c.post_user_event_and_open_turn(e, lambda _e: plan)
-        self.assertEqual(state.control.turn_taking_mode, "broadcast")
         self.assertEqual(state.control.turn_order, [])
         # No turn opened (acknowledgement plan).
         self.assertIsNone(c.user_turn)
 
     def test_advance_turn_pointer_on_close(self):
         bus, state, c = _setup()
-        state.set_turn_taking_mode("round_robin")
         state.set_turn_order(["loom", "claude_code", "gemini_cli"])
         e = _user_post(bus, "ask me")
         plan = plan_with_required(
@@ -1162,7 +1441,6 @@ class RoundRobinPlanHooks(unittest.TestCase):
     def test_advance_skipped_when_flag_false(self):
         # @-mention during round_robin keeps the pointer.
         bus, state, c = _setup()
-        state.set_turn_taking_mode("round_robin")
         state.set_turn_order(["loom", "claude_code", "gemini_cli"])
         state.control.next_speaker_idx = 1
         e = _user_post(bus, "@gemini_cli aside")
@@ -1181,10 +1459,9 @@ class RoundRobinPlanHooks(unittest.TestCase):
         self.assertEqual(state.control.next_speaker_idx, 1)
 
     def test_advance_skipped_when_mode_no_longer_round_robin(self):
-        # If something flipped mode mid-turn, the closing rotation
+        # If something cleared turn_order mid-turn, the closing rotation
         # advance should not run.
         bus, state, c = _setup()
-        state.set_turn_taking_mode("round_robin")
         state.set_turn_order(["loom", "claude_code", "gemini_cli"])
         e = _user_post(bus, "ask me")
         plan = plan_with_required(
@@ -1195,11 +1472,11 @@ class RoundRobinPlanHooks(unittest.TestCase):
         )
         c.open_user_turn(e, plan)
         # External flip back to broadcast (e.g. /cancel-style change).
-        state.set_turn_taking_mode("broadcast")
+        state.set_turn_order([])
         lease = c.acquire_lease("loom", e.id)
         c.on_stream_end(lease, "committed",
                         committed_text="hi", cost_tokens=1)
-        # Pointer was reset on mode flip → 0; no advance applied.
+        # turn_order is empty → no advance applied; pointer stays at 0.
         self.assertEqual(state.control.next_speaker_idx, 0)
 
 

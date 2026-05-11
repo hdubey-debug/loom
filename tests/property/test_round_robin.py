@@ -32,7 +32,6 @@ def test_advance_pointer_stays_within_live_range(initial_pids, n_advances):
     for pid in initial_pids:
         state.add_participant(
             ParticipantInfo(id=pid, capable=True, cost_tier=1))
-    state.set_turn_taking_mode("round_robin")
     state.set_turn_order(initial_pids)
 
     for _ in range(n_advances):
@@ -49,7 +48,6 @@ def test_full_cycle_returns_to_start(pids):
     for pid in pids:
         state.add_participant(
             ParticipantInfo(id=pid, capable=True, cost_tier=1))
-    state.set_turn_taking_mode("round_robin")
     state.set_turn_order(pids)
 
     start = state.control.next_speaker_idx
@@ -67,7 +65,6 @@ def test_removing_pointed_at_pid_keeps_pointer_in_live_range(pids):
     for pid in pids:
         state.add_participant(
             ParticipantInfo(id=pid, capable=True, cost_tier=1))
-    state.set_turn_taking_mode("round_robin")
     state.set_turn_order(pids)
 
     # Remove the participant currently being pointed at.
@@ -94,7 +91,6 @@ def test_pointer_with_inactive_members_never_lands_on_inactive(pids, n_to_remove
     for pid in pids:
         state.add_participant(
             ParticipantInfo(id=pid, capable=True, cost_tier=1))
-    state.set_turn_taking_mode("round_robin")
     state.set_turn_order(pids)
 
     # Mark some participants inactive (cap at remaining-1 to keep at least 1).

@@ -301,41 +301,23 @@ class FloorControlSlashCommands(unittest.TestCase):
         self.assertEqual(self.session.state.control.roles, {})
         self.assertIn("usage", r.message.lower())
 
-    def test_floor_set(self):
+    def test_floor_set_returns_removed_notice(self):
+        # v0.2: /floor, /release, /quiet were removed along with the
+        # ``RoomControlState.floor_owner`` field. The runtime now
+        # returns a removed-feature notice rather than mutating state.
         r = handle_slash_command("/floor loom", self.session)
         self.assertTrue(r.handled)
-        self.assertEqual(self.session.state.control.floor_owner, ["loom"])
+        self.assertIn("removed in v0.2", r.message)
 
-    def test_floor_multi(self):
-        handle_slash_command("/floor loom claude_code", self.session)
-        self.assertEqual(
-            sorted(self.session.state.control.floor_owner),
-            ["claude_code", "loom"],
-        )
-
-    def test_floor_unknown_rejected(self):
-        r = handle_slash_command("/floor ghost", self.session)
-        self.assertIn("unknown", r.message)
-        self.assertIsNone(self.session.state.control.floor_owner)
-
-    def test_release_clears_floor(self):
-        handle_slash_command("/floor loom", self.session)
+    def test_release_returns_removed_notice(self):
         r = handle_slash_command("/release", self.session)
         self.assertTrue(r.handled)
-        self.assertIsNone(self.session.state.control.floor_owner)
+        self.assertIn("removed in v0.2", r.message)
 
-    def test_quiet_silences_set(self):
+    def test_quiet_returns_removed_notice(self):
         r = handle_slash_command("/quiet OAI claude_code", self.session)
         self.assertTrue(r.handled)
-        # /quiet is the inverse of /floor — silenced ids dropped from
-        # the floor; everyone else holds it.
-        self.assertEqual(self.session.state.control.floor_owner, ["loom"])
-
-    def test_quiet_all_rejected(self):
-        r = handle_slash_command("/quiet loom claude_code OAI",
-                                 self.session)
-        self.assertIn("/release", r.message)
-        self.assertIsNone(self.session.state.control.floor_owner)
+        self.assertIn("removed in v0.2", r.message)
 
     def test_brief_normal_detailed(self):
         handle_slash_command("/brief", self.session)
@@ -357,71 +339,10 @@ class FloorControlSlashCommands(unittest.TestCase):
     def test_control_dump(self):
         handle_slash_command(
             "/roles loom=teacher", self.session)
-        handle_slash_command("/floor loom", self.session)
         handle_slash_command("/brief", self.session)
         r = handle_slash_command("/control", self.session)
         self.assertIn("loom=teacher", r.message)
-        self.assertIn("floor: loom", r.message)
         self.assertIn("style: brief", r.message)
-
-
-class FloorControlEndToEnd(unittest.TestCase):
-    """End-to-end: /floor narrows allowed_speakers; only floor agent drafts."""
-
-    def test_floor_gemini_only_gemini_drafts(self):
-        session = build_loom_session(
-            _wirings(("loom", "loom reply", 0),
-                     ("claude_code", "claude reply", 2),
-                     ("gemini", "gemini reply", 1)),
-            default_responder_id="loom",
-            auto_start=False,
-        )
-        try:
-            handle_slash_command("/floor gemini", session)
-            post_user_text(session, "continue")
-            for a in session.actors:
-                a.step()
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
-            senders = {c.sender for c in chats}
-            self.assertEqual(senders, {"gemini"})
-        finally:
-            session.stop()
-
-    def test_floor_then_release_returns_to_broadcast(self):
-        # Replies must be ≥50 chars so the LoopGuard short-text dup
-        # filter doesn't suppress turn-2's draft as a duplicate of
-        # turn-1's. Real proxies emit different text each turn; the
-        # FakeSendProxy is a fixed string so we lean on length instead.
-        long_loom = ("loom answers with a long enough reply to bypass "
-                     "the loop guard's short-text duplicate detector.")
-        long_claude = ("claude answers with a different long enough "
-                       "reply, also bypassing the loop guard.")
-        assert len(long_loom) >= 50 and len(long_claude) >= 50
-        session = build_loom_session(
-            _wirings(("loom", long_loom, 0),
-                     ("claude_code", long_claude, 2)),
-            default_responder_id="loom",
-            auto_start=False,
-        )
-        try:
-            handle_slash_command("/floor loom", session)
-            post_user_text(session, "first")
-            for a in session.actors:
-                a.step()
-            handle_slash_command("/release", session)
-            post_user_text(session, "second")
-            for a in session.actors:
-                a.step()
-            chats = [e for e in session.bus.snapshot()
-                     if e.kind == "chat" and e.sender != "user"]
-            second_turn_senders = {
-                c.sender for c in chats
-                if c.user_turn_id == 1
-            }
-            self.assertEqual(second_turn_senders, {"loom", "claude_code"})
-        finally:
-            session.stop()
 
     def test_directed_turn_sets_wait_for_user_after_close(self):
         session = build_loom_session(

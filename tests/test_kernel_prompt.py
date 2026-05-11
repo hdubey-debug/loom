@@ -359,7 +359,6 @@ class TurnCardRendering(unittest.TestCase):
         # prompt renders the merged field via the ``<topic>`` system
         # field block.
         bus, state, c = _setup()
-        c.set_floor_owner(["loom"])
         c.set_topic("loom teaches derivatives")
         e = ev.chat(sender="user", body="continue")
         bus.post(e)
@@ -428,6 +427,85 @@ class AnchorSynthesis(unittest.TestCase):
         bus, state, c = _setup()
         out = build_prompt("loom", trigger_event=None, coordinator=c)
         self.assertNotIn(ANCHOR_SYNTHESIS_INSTRUCTIONS.splitlines()[0], out)
+
+
+class PromptSectionsHook(unittest.TestCase):
+    """v0.2 ``ConversationPolicy.prompt_sections`` hook."""
+
+    def _stub_policy(self, sections_fn):
+        from loom.contracts import ConversationPolicy, PromptSection
+        from loom.kernel.obligations import plan_for_acknowledgement
+
+        class _Stub(ConversationPolicy):
+            name = "stub"
+            def plan_user_turn(self, user_event, state):
+                return plan_for_acknowledgement(
+                    target_event_ids=[user_event.id])
+            def prompt_sections(self, *, state, participant_id,
+                                trigger_event):
+                return sections_fn(state, participant_id, trigger_event)
+        return _Stub()
+
+    def test_default_returns_no_extra_sections(self):
+        from loom.contracts import ConversationPolicy
+        from loom.kernel.obligations import plan_for_acknowledgement
+
+        class _Bare(ConversationPolicy):
+            name = "bare"
+            def plan_user_turn(self, user_event, state):
+                return plan_for_acknowledgement(target_event_ids=[])
+        bus, state, c = _setup()
+        out = build_prompt("loom", trigger_event=None,
+                           coordinator=c, policy=_Bare())
+        # No section header sneaks in.
+        self.assertNotIn("<<<SECTION>>>", out)
+
+    def test_custom_sections_render_in_system_preamble(self):
+        from loom.contracts import PromptSection
+        policy = self._stub_policy(
+            lambda _s, _p, _t: [
+                PromptSection(name="taxonomy",
+                              text="Use Bloom's taxonomy."),
+                PromptSection(name="stance",
+                              text="Argue the steelman."),
+            ])
+        bus, state, c = _setup()
+        out = build_prompt("loom", trigger_event=None,
+                           coordinator=c, policy=policy)
+        self.assertIn("<<<TAXONOMY>>>", out)
+        self.assertIn("Use Bloom's taxonomy.", out)
+        self.assertIn("<<<STANCE>>>", out)
+        self.assertIn("Argue the steelman.", out)
+        # Kernel charter still renders first.
+        charter_idx = out.find("<<<SYSTEM PREAMBLE>>>")
+        taxonomy_idx = out.find("<<<TAXONOMY>>>")
+        self.assertGreaterEqual(charter_idx, 0)
+        self.assertLess(charter_idx, taxonomy_idx)
+
+    def test_empty_text_sections_skipped(self):
+        from loom.contracts import PromptSection
+        policy = self._stub_policy(
+            lambda _s, _p, _t: [
+                PromptSection(name="empty", text=""),
+                PromptSection(name="present", text="visible"),
+            ])
+        bus, state, c = _setup()
+        out = build_prompt("loom", trigger_event=None,
+                           coordinator=c, policy=policy)
+        self.assertNotIn("<<<EMPTY>>>", out)
+        self.assertIn("<<<PRESENT>>>", out)
+
+    def test_buggy_section_hook_does_not_break_build_prompt(self):
+        def _raises(_s, _p, _t):
+            raise RuntimeError("boom")
+        policy = self._stub_policy(_raises)
+        bus, state, c = _setup()
+        # Build must not raise — the hook is best-effort.
+        out = build_prompt("loom", trigger_event=None,
+                           coordinator=c, policy=policy)
+        # Kernel charter still rendered; no extra sections from the
+        # raising hook.
+        self.assertIn("<<<SYSTEM PREAMBLE>>>", out)
 
 
 if __name__ == "__main__":

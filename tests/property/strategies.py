@@ -121,8 +121,6 @@ def control_events(draw):
         )
     if kind == "floor_updated":
         return ev.floor_updated(
-            floor_owner=draw(
-                st.one_of(st.none(), st.lists(participant_ids, max_size=3))),
             wait_for_user=draw(st.one_of(st.none(), st.booleans())),
         )
     if kind == "style_changed":

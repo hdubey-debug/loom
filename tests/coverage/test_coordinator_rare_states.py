@@ -143,19 +143,19 @@ def test_set_default_summarizer_emits_and_short_circuits(coord_with_two):
     assert len(bus.snapshot()) == before
 
 
-def test_set_floor_owner_with_wait_for_user_branch(coord_with_two):
-    """Covers: coordinator.py:492-496 — set_floor_owner wait_for_user changes."""
+def test_set_wait_for_user_flag_emits_floor_updated(coord_with_two):
+    """v0.2 replacement for set_floor_owner — wait_for_user flag setter."""
     bus, coord, state = coord_with_two
-    coord.set_floor_owner(["alice"], wait_for_user=True)
+    coord.set_wait_for_user_flag(True)
     assert state.control.wait_for_user is True
 
 
-def test_set_floor_owner_unchanged_emits_nothing(coord_with_two):
-    """Covers: coordinator.py:497-498 — empty payload branch."""
+def test_set_wait_for_user_flag_unchanged_emits_nothing(coord_with_two):
+    """No state change → no event."""
     bus, coord, _state = coord_with_two
-    # Floor is open → set to open → no payload changes.
+    # wait_for_user defaults to False → setting False again is a no-op.
     before = len(bus.snapshot())
-    coord.set_floor_owner(None)
+    coord.set_wait_for_user_flag(False)
     assert len(bus.snapshot()) == before
 
 

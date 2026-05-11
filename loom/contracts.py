@@ -14,11 +14,89 @@ satisfying it from ordinary ``send`` / ``stream`` callables.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterator, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import (
+    Any, Iterator, NamedTuple, Optional, Protocol, runtime_checkable,
+)
 
 from loom.kernel.events import Event
 from loom.kernel.obligations import UserTurnPlan
 from loom.kernel.room import RoomStateView
+
+
+@runtime_checkable
+class TriggerPriorityFn(Protocol):
+    """Function signature for the actor's trigger-priority hook.
+
+    Returns the priority class for ``event`` from ``my_id``'s
+    perspective (lower = higher priority), or ``None`` if the event
+    is not actionable. Used by
+    :func:`loom.kernel.actor.pick_priority_trigger` to choose which
+    event in a wakeup batch should drive a draft.
+
+    The kernel default
+    (:data:`loom.kernel.actor.DEFAULT_TRIGGER_PRIORITY`) implements
+    the v0.1.2 three-class scheme: direct user mention (1), dead-letter
+    or rerouted obligation (2), required obligation in the current
+    user turn (3). Custom hooks plug in via
+    :attr:`loom.kernel.room.RoomConfig.trigger_priority`.
+    """
+
+    def __call__(self, event: Event, my_id: str,
+                 user_turn: Any) -> Optional[int]: ...
+
+
+@dataclass(frozen=True)
+class PromptSection:
+    """A policy-supplied prompt section injected by :func:`build_prompt`.
+
+    Injected into the system preamble AFTER the kernel charter (which
+    is fixed and unconditional) and after the policy's
+    :meth:`ConversationPolicy.role_prompt` output. The section's
+    ``name`` is rendered as a comment header so prompt diffs are easy
+    to attribute; ``text`` is the body.
+    """
+    name: str
+    text: str
+
+
+class LeaseCheckResult(NamedTuple):
+    """Return value from :meth:`LeaseCheck.check`.
+
+    ``passed=True`` lets the lease-grant chain continue to the next
+    check; ``passed=False`` immediately rejects the lease and emits a
+    ``lease_denied`` control event carrying ``deny_reason`` and the
+    failing check's name.
+    """
+    passed: bool
+    deny_reason: Optional[str] = None
+
+
+PASSED: LeaseCheckResult = LeaseCheckResult(True, None)
+
+
+@runtime_checkable
+class LeaseCheck(Protocol):
+    """One gate in the lease-grant chain.
+
+    Custom checks plug into :attr:`RoomConfig.lease_checks` to extend
+    or replace the default 8-step chain (open turn / participant
+    valid+active / allowed speaker / per-speaker cap / max-responses
+    cap / throttle / budget). Each check returns
+    :class:`LeaseCheckResult`; the first failing check rejects the
+    lease and emits a ``lease_denied`` event with the check's ``name``
+    and ``deny_reason`` for observability.
+
+    Checks are called under the coordinator's lock, so they MUST be
+    fast and side-effect free — read-only inspection of the supplied
+    context only. A check that raises is treated as a denial with
+    deny_reason ``"check_raised:<class_name>"``.
+    """
+    name: str
+
+    def check(self, *, holder: str, trigger_event_id: int,
+              is_direct_mention: bool,
+              coordinator: Any) -> LeaseCheckResult: ...
 
 
 @runtime_checkable
@@ -112,13 +190,15 @@ class ConversationPolicy(ABC):
 
     PURITY CONTRACT: policies receive a :class:`RoomStateView` —
     a read-only window onto :class:`RoomState`. The view's
-    ``participants`` mapping and ``control.roles`` are
-    :class:`MappingProxyType` instances; ``control.turn_order`` and
-    ``control.floor_owner`` are tuples. Mutation through these surfaces
-    raises ``TypeError`` / ``AttributeError`` at runtime. Policies must
-    also not post to the bus — that is the kernel's job. v0.1 enforces
-    this with the runtime view + a CI grep over ``loom/policy/**/*.py``
-    (see ``tests/test_kernel_kernel_boundary.py``).
+    ``participants`` mapping (whose values are
+    :class:`ParticipantInfoView` instances) and ``control.roles`` are
+    :class:`MappingProxyType` instances; ``control.turn_order`` is a
+    tuple. Mutation through these surfaces raises ``TypeError`` /
+    ``AttributeError`` / ``FrozenInstanceError`` at runtime. Policies
+    must also not post to the bus — that is the kernel's job. v0.1
+    enforces this with the runtime view + a CI grep over
+    ``loom/policy/**/*.py`` (see
+    ``tests/test_kernel_kernel_boundary.py``).
 
     The KERNEL CHARTER (visibility rules, PASS protocol, "do not
     impersonate kernel/system", stream/final separation) is rendered
@@ -156,14 +236,41 @@ class ConversationPolicy(ABC):
         history, or take it via its own constructor argument.
         """
 
+    def charter_text(self, state: RoomStateView) -> str:
+        """Policy-supplied addendum to the kernel charter section.
+
+        Rendered immediately after the kernel's fixed
+        :data:`loom.kernel.prompt.LOOM_PROTOCOL_INSTRUCTIONS` and
+        BEFORE persona / participant id / topic. Use to describe
+        policy-specific behavioral rules that should sit alongside the
+        protocol-level rules. The kernel charter is unconditional and
+        policy-supplied text cannot precede it — preserving invariant 5.
+
+        Default emits a one-line advisory when the room is in
+        round-robin mode (``state.control.turn_order`` non-empty). All
+        bundled policies inherit this default; subclasses can override
+        to suppress (return ``""``) or extend with policy-specific
+        framing.
+        """
+        order = state.control.turn_order
+        if order:
+            rotation = ", ".join(order)
+            return (
+                "Round-robin mode is active. Speakers rotate in this "
+                f"order: {rotation}. Wait for the user to address you "
+                "before drafting."
+            )
+        return ""
+
     def system_prompt(self, participant_id: str,
                       state: RoomStateView) -> str:
         """Additional system instructions appended after the kernel charter.
 
         The kernel always renders the charter
-        (:data:`loom.kernel.prompt.LOOM_PROTOCOL_INSTRUCTIONS`) first;
-        the value returned here follows. Default returns ``""`` so
-        policies can omit it.
+        (:data:`loom.kernel.prompt.LOOM_PROTOCOL_INSTRUCTIONS`) first,
+        followed by the policy's :meth:`charter_text`; the value
+        returned here follows both. Default returns ``""`` so policies
+        can omit it.
 
         ``participant_id`` was named ``actor_id`` pre-v0.1; renamed for
         cross-layer naming consistency (P2.4 / audit §5.2).
@@ -178,3 +285,80 @@ class ConversationPolicy(ABC):
         prompts, debater stance assignment. Default returns ``""``.
         """
         return ""
+
+    def should_post_response(
+        self, *, body: str, state: RoomStateView,
+        participant_id: str,
+    ) -> bool:
+        """Veto the post-stream commit of a participant's response.
+
+        Called by :func:`loom.kernel.streaming.run_streaming_call`
+        AFTER the kernel's own filters (empty / idle-phrase / IoU
+        loop-guard). Returning ``False`` suppresses the response;
+        returning ``True`` lets the commit proceed.
+
+        Default ``True`` — the kernel's filters already cover
+        idle-phrase + bag-of-words duplicate detection. Policies that
+        want additional veto rules (semantic similarity check, an
+        off-topic detector, a rate-limiter) override this hook.
+        Buggy hooks that raise are treated as ``True`` so a bad policy
+        cannot lose a legitimate response.
+        """
+        del body, state, participant_id
+        return True
+
+    def prompt_sections(
+        self, *, state: RoomStateView, participant_id: str,
+        trigger_event: Optional[Event],
+    ) -> list[PromptSection]:
+        """Additional system-preamble sections supplied by the policy.
+
+        Each :class:`PromptSection` is rendered into the system
+        preamble immediately after the kernel charter, persona, topic,
+        participant id, capabilities, and the legacy ``system_prompt``
+        / ``role_prompt`` blocks — i.e. the policy gets a stable
+        position late in the preamble but before the transcript and
+        trigger pointer.
+
+        Default returns ``[]``; the bundled policies emit no extra
+        sections. Custom policies can populate this to inject
+        scenario-specific framing (taxonomy hints, slot-aware
+        directives, debate stance, etc.) without subclassing
+        :func:`loom.kernel.prompt.build_prompt`.
+
+        ``trigger_event`` is the same value :func:`build_prompt`
+        receives — the event the actor is responding to, or ``None``
+        in the idle/no-trigger case.
+        """
+        del state, participant_id, trigger_event
+        return []
+
+    def dead_letter_target(self, *, state: RoomStateView,
+                           removed_participant: str) -> Optional[str]:
+        """Pick the reroute target for a dead-lettered @mention.
+
+        Called by :meth:`RoomCoordinator._dead_letter_pending_mentions`
+        when an @-mention can no longer be served because the named
+        participant was removed mid-turn. The hook returns the pid that
+        should inherit the obligation, or ``None`` to drop the mention
+        entirely.
+
+        Default: the configured ``default_responder_id`` if it points
+        to an active+capable participant, otherwise the cheapest
+        active+capable participant (preserves v0.1.2 kernel behavior).
+
+        ``removed_participant`` is informational — the participant has
+        already been removed from ``state.participants`` by the time
+        this hook fires.
+        """
+        del removed_participant
+        if state.default_responder_id:
+            info = state.participants.get(state.default_responder_id)
+            if info is not None and info.active and info.capable:
+                return state.default_responder_id
+        candidates = [p for p in state.participants.values()
+                      if p.active and p.capable]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda p: (p.cost_tier, p.id))
+        return candidates[0].id

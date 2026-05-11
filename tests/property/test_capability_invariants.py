@@ -22,6 +22,7 @@ from hypothesis import given, strategies as st
 
 from loom.kernel import events as ev
 from loom.kernel.bus import (
+    _KERNEL_AUTH,
     MessageBus,
     SenderMismatchError,
     visible_to,
@@ -73,7 +74,7 @@ def test_post_internal_bypasses_binding(actor_id, sender):
     bus = MessageBus()
     unbind = bus.bind_actor(actor_id)
     try:
-        rid = bus.post_internal(ev.chat(sender=sender, body="x"))
+        rid = bus.post_internal(ev.chat(sender=sender, body="x"), auth=_KERNEL_AUTH)
         assert rid == 0
     finally:
         unbind()
@@ -154,7 +155,7 @@ def test_dm_never_visible_to_non_target(target, other, body):
         return  # not a privacy violation
     bus = MessageBus()
     bus.post_internal(ev.chat(
-        sender="user", body=body, channel=f"dm:{target}"))
+        sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
     snap = bus.snapshot(audience=other)
     for e in snap:
         assert e.channel != f"dm:{target}"
@@ -164,7 +165,7 @@ def test_dm_never_visible_to_non_target(target, other, body):
 def test_dm_visible_to_target_user_system(target, body):
     bus = MessageBus()
     bus.post_internal(ev.chat(
-        sender="user", body=body, channel=f"dm:{target}"))
+        sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
     for audience in (target, "user", "system"):
         snap = bus.snapshot(audience=audience)
         assert any(e.channel == f"dm:{target}" for e in snap)
@@ -190,7 +191,7 @@ def test_render_memo_distinct_per_scope(body):
     import json as _json
     bus = MessageBus()
     e = ev.chat(sender="alice", body=body)
-    bus.post_internal(e)
+    bus.post_internal(e, auth=_KERNEL_AUTH)
     main_a = bus.render_chat_line(e, scope="main")
     main_b = bus.render_chat_line(e, scope="main")
     dm_a = bus.render_chat_line(e, scope="dm")

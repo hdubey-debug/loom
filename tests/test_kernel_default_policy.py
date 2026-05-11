@@ -40,7 +40,6 @@ from loom.policy.default import (
     _detect_vocative,
     _instruction_for_broadcast,
     _instruction_for_directed,
-    _instruction_for_floor,
     _instruction_for_game_start,
     _instruction_for_round_robin,
     _is_acknowledgement,
@@ -79,7 +78,6 @@ it = types.SimpleNamespace(
     _detect_vocative=_detect_vocative,
     _instruction_for_broadcast=_instruction_for_broadcast,
     _instruction_for_directed=_instruction_for_directed,
-    _instruction_for_floor=_instruction_for_floor,
     _instruction_for_game_start=_instruction_for_game_start,
     _instruction_for_round_robin=_instruction_for_round_robin,
     _is_acknowledgement=_is_acknowledgement,
@@ -305,48 +303,6 @@ class NoActiveParticipants(unittest.TestCase):
         self.assertFalse(plan.requires_response)
 
 
-class FloorNarrowed(unittest.TestCase):
-    """RoomControlState.floor_owner narrows ``allowed_speakers``."""
-
-    def test_floor_owner_replaces_broadcast(self):
-        state = _state_with("a", "b", "c")
-        state.set_floor_owner(["a"])
-        e = _user_chat("hello room")
-        plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants, {"a"})
-        self.assertEqual(plan.allowed_speakers, {"a"})
-        self.assertEqual(plan.max_responses, 1)
-        self.assertTrue(plan.wait_for_user_after)
-
-    def test_floor_owner_with_multiple_pids(self):
-        state = _state_with("a", "b", "c")
-        state.set_floor_owner(["a", "b"])
-        e = _user_chat("continue")
-        plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants, {"a", "b"})
-        self.assertEqual(plan.allowed_speakers, {"a", "b"})
-        self.assertEqual(plan.max_responses, 2)
-
-    def test_floor_falls_back_to_broadcast_when_floor_inactive(self):
-        state = _state_with("a", "b", "c")
-        state.set_floor_owner(["a"])
-        state.set_active("a", False)
-        e = _user_chat("hello")
-        plan = it.classify(e, state, prior_speaker=None)
-        # Floor owner is inactive → broadcast to remaining active.
-        self.assertEqual(plan.required_participants, {"b", "c"})
-        self.assertFalse(plan.wait_for_user_after)
-
-    def test_user_mention_overrides_floor(self):
-        state = _state_with("a", "b", "c")
-        state.set_floor_owner(["a"])
-        e = _user_chat("@b hello")
-        plan = it.classify(e, state, prior_speaker=None)
-        # Direct @-mention always wins, even when floor is set.
-        self.assertEqual(plan.required_participants, {"b"})
-        self.assertEqual(plan.allowed_speakers, {"b"})
-
-
 class BroadcastDefaults(unittest.TestCase):
     """Broadcast (no floor, no mention) defaults."""
 
@@ -487,14 +443,6 @@ class VocativeAddressing(unittest.TestCase):
         self.assertEqual(plan.required_participants,
                          {"claude_code", "OAI", "gemini"})
 
-    def test_vocative_overrides_floor(self):
-        # User explicitly named someone — that wins over a closed floor.
-        state = _state_with("claude_code", "OAI", "gemini")
-        state.set_floor_owner(["OAI"])
-        e = _user_chat("gemini, what do you think?")
-        plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.required_participants, {"gemini"})
-
     def test_vocative_skipped_for_inactive(self):
         state = _state_with("claude_code", "OAI", "gemini")
         state.set_active("gemini", False)
@@ -563,7 +511,7 @@ class GameStartDetection(unittest.TestCase):
         state = _state_with("a", "b", "c")
         e = _user_chat("lets play a game guys")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "round_robin")
+        # ``set_turn_order`` non-empty is the round-robin arm signal.
         self.assertEqual(plan.set_turn_order, ["a", "b", "c"])
         # Opening turn still broadcasts so each agent can propose.
         self.assertEqual(plan.allowed_speakers, {"a", "b", "c"})
@@ -574,39 +522,38 @@ class GameStartDetection(unittest.TestCase):
         state = _state_with("a", "b")
         e = _user_chat("how about 20 questions?")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "round_robin")
+        self.assertEqual(plan.set_turn_order, ["a", "b"])
 
     def test_take_turns_phrase(self):
         state = _state_with("a", "b")
         e = _user_chat("lets take turns answering")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "round_robin")
+        self.assertEqual(plan.set_turn_order, ["a", "b"])
 
     def test_would_you_rather(self):
         state = _state_with("a", "b")
         e = _user_chat("would you rather have x or y")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "round_robin")
+        self.assertEqual(plan.set_turn_order, ["a", "b"])
 
     def test_two_truths_and_a_lie(self):
         state = _state_with("a", "b", "c")
         e = _user_chat("two truths and a lie — drop three statements")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "round_robin")
+        self.assertEqual(plan.set_turn_order, ["a", "b", "c"])
 
     def test_single_participant_does_not_enable(self):
         state = _state_with("a")
         e = _user_chat("lets play a game")
         plan = it.classify(e, state, prior_speaker=None)
         # Need ≥2 active capable; falls through to broadcast.
-        self.assertIsNone(plan.set_turn_taking_mode)
         self.assertIsNone(plan.set_turn_order)
 
     def test_unrelated_text_does_not_enable(self):
         state = _state_with("a", "b")
         e = _user_chat("can you explain quicksort to me?")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertIsNone(plan.set_turn_taking_mode)
+        self.assertIsNone(plan.set_turn_order)
 
     def test_explicit_mention_overrides_game_start(self):
         # Direct mention (Case 1) wins over game-start (Case 5).
@@ -615,7 +562,7 @@ class GameStartDetection(unittest.TestCase):
         plan = it.classify(e, state, prior_speaker=None)
         self.assertEqual(plan.required_participants, {"a"})
         # Game-start side-effect skipped because directed turn won.
-        self.assertIsNone(plan.set_turn_taking_mode)
+        self.assertIsNone(plan.set_turn_order)
 
 
 class RoundRobinRotation(unittest.TestCase):
@@ -623,7 +570,7 @@ class RoundRobinRotation(unittest.TestCase):
 
     def _round_robin_state(self, *ids: str, idx: int = 0) -> RoomState:
         s = _state_with(*ids)
-        s.set_turn_taking_mode("round_robin")
+        # A non-empty turn_order is itself the round-robin mode signal.
         s.set_turn_order(list(ids))
         s.control.next_speaker_idx = idx
         return s
@@ -680,7 +627,7 @@ class RoundRobinRotation(unittest.TestCase):
         plan = it.classify(e, state, prior_speaker=None)
         self.assertFalse(plan.requires_response)
         # Mode stays active — no flip back to broadcast on plain ack.
-        self.assertIsNone(plan.set_turn_taking_mode)
+        self.assertIsNone(plan.set_turn_order)
 
     def test_rotation_falls_back_to_broadcast_when_all_inactive(self):
         state = self._round_robin_state("a", "b", "c", idx=0)
@@ -700,7 +647,7 @@ class GameEndDetection(unittest.TestCase):
 
     def _round_robin_state(self) -> RoomState:
         s = _state_with("a", "b", "c")
-        s.set_turn_taking_mode("round_robin")
+        # Non-empty turn_order signals round-robin mode.
         s.set_turn_order(["a", "b", "c"])
         return s
 
@@ -709,32 +656,32 @@ class GameEndDetection(unittest.TestCase):
         e = _user_chat("good game everyone")
         plan = it.classify(e, state, prior_speaker=None)
         self.assertFalse(plan.requires_response)
-        self.assertEqual(plan.set_turn_taking_mode, "broadcast")
+        # ``set_turn_order=[]`` is the exit-round-robin signal.
         self.assertEqual(plan.set_turn_order, [])
 
     def test_thanks_for_playing_exits(self):
         state = self._round_robin_state()
         e = _user_chat("thanks for playing")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "broadcast")
+        self.assertEqual(plan.set_turn_order, [])
 
     def test_lets_stop_exits(self):
         state = self._round_robin_state()
         e = _user_chat("lets stop and try something else")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "broadcast")
+        self.assertEqual(plan.set_turn_order, [])
 
     def test_new_topic_exits(self):
         state = self._round_robin_state()
         e = _user_chat("new topic — help me debug this code")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "broadcast")
+        self.assertEqual(plan.set_turn_order, [])
 
     def test_im_done_exits(self):
         state = self._round_robin_state()
         e = _user_chat("i'm done playing")
         plan = it.classify(e, state, prior_speaker=None)
-        self.assertEqual(plan.set_turn_taking_mode, "broadcast")
+        self.assertEqual(plan.set_turn_order, [])
 
     def test_game_end_only_in_round_robin(self):
         # In broadcast mode, "good game" is just a message.
@@ -742,7 +689,7 @@ class GameEndDetection(unittest.TestCase):
         e = _user_chat("good game (we should have one)")
         plan = it.classify(e, state, prior_speaker=None)
         # Falls through to broadcast (no game-end exit signaled).
-        self.assertIsNone(plan.set_turn_taking_mode)
+        self.assertIsNone(plan.set_turn_order)
         self.assertEqual(plan.allowed_speakers, {"a", "b"})
 
 
@@ -756,12 +703,11 @@ class GameSimulation(unittest.TestCase):
         # round-robin enabled with sorted order.
         plan1 = it.classify(_user_chat("lets play a game guys"),
                             state, prior_speaker=None)
-        self.assertEqual(plan1.set_turn_taking_mode, "round_robin")
         self.assertEqual(plan1.set_turn_order,
                          ["OAI", "claude_code", "gemini"])
         # Apply the plan-driven changes (the coordinator does this in
-        # production via _apply_plan_state_changes_locked).
-        state.set_turn_taking_mode(plan1.set_turn_taking_mode)
+        # production via _apply_plan_state_changes_locked). The
+        # non-empty turn_order is itself the round-robin arm signal.
         state.set_turn_order(plan1.set_turn_order)
 
         # 2. User: "person" — round-robin pick (idx 0 → OAI).
@@ -790,10 +736,9 @@ class GameSimulation(unittest.TestCase):
         plan6 = it.classify(_user_chat("good game"), state,
                             prior_speaker=None)
         self.assertFalse(plan6.requires_response)
-        self.assertEqual(plan6.set_turn_taking_mode, "broadcast")
-        # After applying, mode is back to broadcast.
-        state.set_turn_taking_mode(plan6.set_turn_taking_mode)
-        self.assertEqual(state.control.turn_taking_mode, "broadcast")
+        self.assertEqual(plan6.set_turn_order, [])
+        # After applying, mode is back to broadcast (empty turn_order).
+        state.set_turn_order(plan6.set_turn_order)
         self.assertEqual(state.control.turn_order, [])
 
         # 7. Next message — broadcast resumes.

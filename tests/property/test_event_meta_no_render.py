@@ -20,7 +20,7 @@ from __future__ import annotations
 from hypothesis import given, strategies as st
 
 from loom.kernel import events as ev
-from loom.kernel.bus import MessageBus
+from loom.kernel.bus import _KERNEL_AUTH, MessageBus
 from loom.kernel.coordinator import RoomCoordinator
 from loom.kernel.prompt import build_prompt
 from loom.kernel.room import ParticipantInfo, RoomConfig, RoomState
@@ -54,7 +54,7 @@ def test_chat_event_meta_does_not_leak_into_prompt(
     bus, coord = _build_session()
     chat = ev.chat(sender=sender, body=body,
                    meta={meta_key: meta_value})
-    bus.post_internal(chat)
+    bus.post_internal(chat, auth=_KERNEL_AUTH)
     prompt = build_prompt("alice", chat, coord)
     # The body itself is rendered (that's the transcript) — that's fine.
     # But meta keys/values must NOT be present anywhere.
@@ -73,7 +73,7 @@ def test_summary_event_meta_does_not_leak_into_prompt():
         body="prior summary content",
         meta={"compaction_marker": "META_LEAK_CANARY_SUM"},
     )
-    bus.post_internal(summary)
+    bus.post_internal(summary, auth=_KERNEL_AUTH)
     prompt = build_prompt("alice", None, coord)
     assert "compaction_marker" not in prompt
     assert "META_LEAK_CANARY_SUM" not in prompt

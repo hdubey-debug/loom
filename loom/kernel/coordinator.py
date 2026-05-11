@@ -39,8 +39,9 @@ from typing import Callable, Optional, cast
 import threading
 import time
 
+from loom.contracts import ConversationPolicy
 from loom.kernel import events as ev
-from loom.kernel.bus import MessageBus
+from loom.kernel.bus import _KERNEL_AUTH, MessageBus
 from loom.kernel.events import Event
 from loom.kernel.obligations import (
     ResponseObligation,
@@ -51,7 +52,6 @@ from loom.kernel.room import (
     RoomConfig,
     RoomState,
     StyleLevel,
-    TurnTakingMode,
 )
 from loom.kernel.obligations import plan_for_default
 from loom.kernel.user_turn import (
@@ -217,6 +217,152 @@ class BudgetConfig:
 
 
 # ---------------------------------------------------------------------------
+# Default LeaseCheck chain (v0.2)
+# ---------------------------------------------------------------------------
+#
+# The kernel's eight built-in lease-grant gates. Each preserves the
+# v0.1.2 behavior exactly; the only change is that rejection now goes
+# through :class:`loom.contracts.LeaseCheckResult` (and emits an
+# observable ``lease_denied`` event) instead of returning ``None``
+# silently. Custom checks plug in via ``RoomConfig.lease_checks``.
+
+from loom.contracts import LeaseCheck, LeaseCheckResult, PASSED
+
+
+class _OpenTurnCheck:
+    name = "open_turn"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del holder, trigger_event_id, is_direct_mention
+        ut = coordinator._user_turn
+        if ut is None or ut.state != "open":
+            return LeaseCheckResult(False, "no_open_user_turn")
+        return PASSED
+
+
+class _ParticipantRegisteredCheck:
+    name = "participant_registered"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del trigger_event_id, is_direct_mention
+        if holder not in coordinator.state.participants:
+            return LeaseCheckResult(False, "unknown_participant")
+        return PASSED
+
+
+class _ParticipantActiveCheck:
+    name = "participant_active"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del trigger_event_id, is_direct_mention
+        info = coordinator.state.participants.get(holder)
+        if info is None or not info.active:
+            return LeaseCheckResult(False, "participant_inactive")
+        return PASSED
+
+
+class _AllowedSpeakerCheck:
+    name = "allowed_speaker"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del trigger_event_id
+        ut = coordinator._user_turn
+        plan = ut.frozen_plan
+        if plan.allowed_speakers:
+            if holder not in plan.allowed_speakers and not is_direct_mention:
+                return LeaseCheckResult(False, "not_in_allowed_speakers")
+        else:
+            # Legacy fallback path: no explicit allowed_speakers on the
+            # plan → require an obligation, optional status, or direct
+            # mention. Same semantics as v0.1.2.
+            has_obligation = ut.obligation_for(holder) is not None
+            is_optional = holder in ut.optional_participants
+            if not (has_obligation or is_optional or is_direct_mention):
+                return LeaseCheckResult(False, "no_obligation")
+        return PASSED
+
+
+class _PerParticipantCapCheck:
+    name = "per_participant_cap"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del trigger_event_id
+        if is_direct_mention:
+            return PASSED
+        cap = coordinator.config.max_drafts_per_participant
+        ut = coordinator._user_turn
+        if ut.speaker_counts.get(holder, 0) >= cap:
+            return LeaseCheckResult(False, "speaker_cap_reached")
+        return PASSED
+
+
+class _MaxResponsesCheck:
+    name = "max_responses"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del trigger_event_id
+        if is_direct_mention:
+            return PASSED
+        ut = coordinator._user_turn
+        cap_max = ut.frozen_plan.max_responses
+        if cap_max <= 0:
+            return PASSED
+        committed = len(ut.drafted)
+        outstanding = sum(
+            1 for lease in coordinator._leases.values()
+            if lease.user_turn_id == ut.id and lease.valid
+            and lease.holder not in ut.drafted
+        )
+        if committed + outstanding >= cap_max:
+            return LeaseCheckResult(False, "max_responses_reached")
+        return PASSED
+
+
+class _ThrottleCheck:
+    name = "throttle"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del trigger_event_id, is_direct_mention
+        # ``try_consume`` is side-effecting (decrements the bucket); it
+        # must run exactly when we'd grant the lease, so this check
+        # lives near the tail of the chain.
+        if not coordinator._throttle.try_consume(holder, "main"):
+            return LeaseCheckResult(False, "throttle_exceeded")
+        return PASSED
+
+
+class _BudgetCheck:
+    name = "budget"
+
+    def check(self, *, holder, trigger_event_id, is_direct_mention,
+              coordinator) -> LeaseCheckResult:
+        del holder, trigger_event_id, is_direct_mention
+        ut = coordinator._user_turn
+        if not coordinator._budget.can_acquire(ut.id):
+            return LeaseCheckResult(False, "budget_exceeded")
+        return PASSED
+
+
+DEFAULT_LEASE_CHECKS: tuple[LeaseCheck, ...] = (
+    _OpenTurnCheck(),
+    _ParticipantRegisteredCheck(),
+    _ParticipantActiveCheck(),
+    _AllowedSpeakerCheck(),
+    _PerParticipantCapCheck(),
+    _MaxResponsesCheck(),
+    _ThrottleCheck(),
+    _BudgetCheck(),
+)
+
+
+# ---------------------------------------------------------------------------
 # RoomCoordinator
 # ---------------------------------------------------------------------------
 
@@ -231,7 +377,8 @@ class RoomCoordinator:
 
     def __init__(self, bus: MessageBus, state: RoomState,
                  *,
-                 policy_error_mode: PolicyErrorMode = "close_turn") -> None:
+                 policy_error_mode: PolicyErrorMode = "close_turn",
+                 policy: Optional["ConversationPolicy"] = None) -> None:
         self.bus = bus
         self.state = state
         self.config: RoomConfig = state.config
@@ -242,6 +389,14 @@ class RoomCoordinator:
             raise ValueError(
                 f"unknown policy_error_mode: {policy_error_mode!r}")
         self.policy_error_mode: PolicyErrorMode = policy_error_mode
+
+        # Optional reference to the room's :class:`ConversationPolicy`,
+        # used by background paths (dead-letter routing on participant
+        # removal, watchdog hooks) that fire outside the
+        # ``post_user_event_and_open_turn`` call site where the policy
+        # would otherwise arrive via ``classify_fn``. When ``None`` the
+        # coordinator uses kernel-default behavior (mirrors v0.1.2).
+        self._policy: Optional["ConversationPolicy"] = policy
 
         self._leases: dict[int, TurnLease] = {}
         self._next_lease_id = 0
@@ -256,6 +411,14 @@ class RoomCoordinator:
         self._budget = BudgetConfig()
 
         self._compaction_in_flight = False
+
+        # v0.2: dedicated watchdog thread state. ``start_watchdog`` and
+        # ``stop_watchdog`` are idempotent; the runtime layer wires
+        # them into its own start/stop. Until started, idle timeouts
+        # rely on whoever calls ``check_idle_timeout`` directly (e.g.
+        # tests using ``actor.step()``).
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._watchdog_stop_event = threading.Event()
 
     # ------------------------------------------------------------------
     # Properties
@@ -281,7 +444,7 @@ class RoomCoordinator:
     def register_participant(self, info: ParticipantInfo) -> None:
         with self._lock:
             self.state.add_participant(info)
-            self.bus.post_internal(ev.participant_added(info.id, info.role_hints))
+            self.bus.post_internal(ev.participant_added(info.id, info.role_hints), auth=_KERNEL_AUTH)
 
     def unregister_participant(self, pid: str) -> None:
         """Remove participant, re-resolve slots, dead-letter pending mentions.
@@ -294,14 +457,14 @@ class RoomCoordinator:
         """
         with self._lock:
             slot_changes = self.state.remove_participant(pid)
-            self.bus.post_internal(ev.participant_removed(pid))
+            self.bus.post_internal(ev.participant_removed(pid), auth=_KERNEL_AUTH)
 
             # Slot-change events. Only default_responder_changed is
             # required v0; anchor/chair/summarizer get analogues if any
             # were defined for the room.
             if "default_responder_id" in slot_changes:
                 self.bus.post_internal(ev.default_responder_changed(
-                    pid, slot_changes["default_responder_id"]))
+                    pid, slot_changes["default_responder_id"]), auth=_KERNEL_AUTH)
             for slot in ("anchor_id", "chair_id", "default_summarizer_id"):
                 if slot in slot_changes:
                     factory = {
@@ -310,7 +473,7 @@ class RoomCoordinator:
                         "default_summarizer_id": "default_summarizer_changed",
                     }[slot]
                     self.bus.post_internal(ev._control(
-                        factory, old_id=pid, new_id=slot_changes[slot]))
+                        factory, old_id=pid, new_id=slot_changes[slot]), auth=_KERNEL_AUTH)
 
             # Invalidate any of pid's in-flight leases.
             for lease in list(self._leases.values()):
@@ -400,7 +563,7 @@ class RoomCoordinator:
                 level=new_ob.level,
                 target_event_ids=list(new_ob.target_event_ids),
                 reason=new_ob.reason,
-            ))
+            ), auth=_KERNEL_AUTH)
             # Only transfer once — additional must/should obligations
             # from the removed participant collapse onto the same
             # fallback rather than producing N duplicate obligations.
@@ -410,7 +573,24 @@ class RoomCoordinator:
         self, removed_pid: str,
         slot_changes: dict[str, Optional[str]],
     ) -> None:
-        """Re-route or dead-letter outstanding @mentions to ``removed_pid``."""
+        """Re-route or dead-letter outstanding @mentions to ``removed_pid``.
+
+        Routing choice is delegated to
+        :meth:`ConversationPolicy.dead_letter_target` when a policy is
+        wired onto the coordinator; otherwise we fall back to the
+        kernel default chain (configured default-responder slot, then
+        cheapest active capable). The policy hook receives a fresh
+        view (``removed_pid`` has already been pulled from the
+        participant map) plus the removed pid for context.
+
+        ``slot_changes`` is unused now that routing is delegated — it
+        was the legacy in-flight transfer of the new
+        ``default_responder_id`` produced by slot re-resolution; the
+        same value is already on ``state.default_responder_id`` by the
+        time we reach this method, so the policy hook reads it from
+        the state view directly.
+        """
+        del slot_changes
         if not self._user_turn:
             return
         ut = self._user_turn
@@ -422,15 +602,33 @@ class RoomCoordinator:
                 last_response_id = e.id
         for e in snap:
             if removed_pid in e.addressees and e.id > last_response_id:
-                reroute_to = slot_changes.get("default_responder_id",
-                                              self.state.default_responder_id)
-                if reroute_to is None:
-                    reroute_to = self.state.cheapest_active_capable()
+                reroute_to = self._resolve_dead_letter_target(removed_pid)
                 self.bus.post_internal(ev.dead_letter(
                     original_mention_event_id=e.id,
                     reroute_to=reroute_to,
                     reason="participant_removed",
-                ))
+                ), auth=_KERNEL_AUTH)
+
+    def _resolve_dead_letter_target(self, removed_pid: str) -> Optional[str]:
+        """Pick a dead-letter reroute target via the policy hook.
+
+        Falls back to the kernel default (default-responder slot, then
+        cheapest active capable) when no policy is registered on this
+        coordinator. The fallback mirrors v0.1.2 behavior exactly.
+        """
+        if self._policy is not None:
+            try:
+                return self._policy.dead_letter_target(
+                    state=self.state.view(),
+                    removed_participant=removed_pid)
+            except Exception:
+                # A buggy hook must not block dead-letter emission —
+                # silently fall through to the kernel default.
+                pass
+        reroute_to = self.state.default_responder_id
+        if reroute_to is None:
+            reroute_to = self.state.cheapest_active_capable()
+        return reroute_to
 
     # ------------------------------------------------------------------
     # Topic / slots
@@ -444,7 +642,7 @@ class RoomCoordinator:
             if self._user_turn and self._user_turn.state == "open":
                 self._close_user_turn_locked("topic_changed")
             self.state.set_topic(new_topic)
-            self.bus.post_internal(ev.topic_changed(old, new_topic or ""))
+            self.bus.post_internal(ev.topic_changed(old, new_topic or ""), auth=_KERNEL_AUTH)
 
     def set_default_responder(self, pid: Optional[str]) -> None:
         with self._lock:
@@ -454,7 +652,7 @@ class RoomCoordinator:
             self.state.set_default_responder(pid)
             for lease in self._leases.values():
                 lease.valid = False
-            self.bus.post_internal(ev.default_responder_changed(old, pid))
+            self.bus.post_internal(ev.default_responder_changed(old, pid), auth=_KERNEL_AUTH)
 
     def set_anchor(self, pid: Optional[str]) -> None:
         with self._lock:
@@ -463,7 +661,7 @@ class RoomCoordinator:
                 return
             self.state.set_anchor(pid)
             self.bus.post_internal(ev._control("anchor_changed",
-                                      old_id=old, new_id=pid))
+                                      old_id=old, new_id=pid), auth=_KERNEL_AUTH)
 
     def set_chair(self, pid: Optional[str]) -> None:
         with self._lock:
@@ -472,7 +670,7 @@ class RoomCoordinator:
                 return
             self.state.set_chair(pid)
             self.bus.post_internal(ev._control("chair_changed",
-                                      old_id=old, new_id=pid))
+                                      old_id=old, new_id=pid), auth=_KERNEL_AUTH)
 
     def set_default_summarizer(self, pid: Optional[str]) -> None:
         with self._lock:
@@ -481,7 +679,7 @@ class RoomCoordinator:
                 return
             self.state.set_default_summarizer(pid)
             self.bus.post_internal(ev._control("default_summarizer_changed",
-                                      old_id=old, new_id=pid))
+                                      old_id=old, new_id=pid), auth=_KERNEL_AUTH)
 
     # ------------------------------------------------------------------
     # Room control state — roles / floor / wait_for_user / style
@@ -499,39 +697,24 @@ class RoomCoordinator:
             new = dict(self.state.control.roles)
             if new == old:
                 return
-            self.bus.post_internal(ev.roles_assigned(new))
+            self.bus.post_internal(ev.roles_assigned(new), auth=_KERNEL_AUTH)
 
-    def set_floor_owner(self, floor_owner: Optional[list[str]],
-                        *,
-                        wait_for_user: Optional[bool] = None) -> None:
-        """Set or clear the floor owner.
+    def set_wait_for_user_flag(self, wait_for_user: bool) -> None:
+        """Set or clear the cross-turn ``wait_for_user`` flag.
 
-        Pass ``None`` (or empty list) to open the floor. Emits
-        ``floor_updated`` with whatever fields changed.
-
-        P2.3: ``active_goal`` parameter removed; topic now flows
-        through :meth:`set_topic` (single source of truth in
-        :attr:`RoomState.topic`).
+        Emits a ``floor_updated`` control event (kept under the legacy
+        event name for journal back-compat) when the flag value
+        changes. Used by lifecycle paths that need to gate agent
+        wakeups on a user post without opening a UserTurn.
         """
         with self._lock:
-            old = self.state.set_floor_owner(floor_owner)
-            payload: dict = {}
-            new_floor = self.state.control.floor_owner
-            if old != new_floor:
-                payload["floor_owner"] = (
-                    list(new_floor) if new_floor is not None else [])
-            if wait_for_user is not None:
-                old_wait = self.state.set_wait_for_user(wait_for_user)
-                if old_wait != self.state.control.wait_for_user:
-                    payload["wait_for_user"] = (
-                        self.state.control.wait_for_user)
-            if not payload:
+            old = self.state.set_wait_for_user(wait_for_user)
+            new = self.state.control.wait_for_user
+            if old == new:
                 return
-            # ``floor_updated`` accepts only the fields that changed.
-            self.bus.post_internal(ev.floor_updated(
-                floor_owner=payload.get("floor_owner"),
-                wait_for_user=payload.get("wait_for_user"),
-            ))
+            self.bus.post_internal(
+                ev.floor_updated(wait_for_user=new),
+                auth=_KERNEL_AUTH)
 
     def set_style(self, style: StyleLevel) -> None:
         """Update the brevity preference."""
@@ -540,7 +723,7 @@ class RoomCoordinator:
             new = self.state.control.style
             if old == new:
                 return
-            self.bus.post_internal(ev.style_changed(old, new))
+            self.bus.post_internal(ev.style_changed(old, new), auth=_KERNEL_AUTH)
 
     # ------------------------------------------------------------------
     # UserTurn lifecycle
@@ -573,12 +756,12 @@ class RoomCoordinator:
         turn is open and the actor sees the correct trigger.
         """
         with self._lock:
-            self.bus.post_internal(user_event)
+            self.bus.post_internal(user_event, auth=_KERNEL_AUTH)
             plan = self._run_policy_under_lock(classify_fn, user_event)
-            # Apply plan-driven state changes (turn_taking_mode /
-            # turn_order) BEFORE the open check so acknowledgement plans
-            # carrying ``set_turn_taking_mode="broadcast"`` (game-end
-            # phrase exit) still flip the mode even though no turn opens.
+            # Apply plan-driven state changes (turn_order) BEFORE the
+            # open check so acknowledgement plans carrying
+            # ``set_turn_order=[]`` (game-end phrase exit) still clear
+            # the rotation even though no turn opens.
             self._apply_plan_state_changes_locked(plan)
             if plan.routing_case != "acknowledgement":
                 self.open_user_turn(user_event, plan)
@@ -616,7 +799,7 @@ class RoomCoordinator:
                 message=str(exc)[:500],
                 elapsed_ms=round(elapsed_ms, 3),
                 user_event_id=user_event.id,
-            ))
+            ), auth=_KERNEL_AUTH)
             if self.policy_error_mode == "raise":
                 raise
             if self.policy_error_mode == "default_responder":
@@ -641,24 +824,23 @@ class RoomCoordinator:
                 elapsed_ms=round(elapsed_ms, 3),
                 threshold_ms=_POLICY_SLOW_THRESHOLD_MS,
                 user_event_id=user_event.id,
-            ))
+            ), auth=_KERNEL_AUTH)
         return plan
 
     def _apply_plan_state_changes_locked(self, plan: UserTurnPlan) -> None:
         """Apply :class:`UserTurnPlan` state-mutation directives to ``state.control``.
 
-        The interpreter is pure; it returns a plan with ``set_turn_taking_mode``
-        and / or ``set_turn_order`` set when an external state change is
-        warranted (e.g. auto-enabling round-robin on a game-start phrase).
-        The coordinator is the only mutator, so we apply them here under
-        the lock.
+        The interpreter is pure; it returns a plan with ``set_turn_order``
+        set when an external state change is warranted (e.g. auto-arming
+        round-robin on a game-start phrase, or clearing it to exit
+        round-robin). A non-empty ``turn_order`` is itself the
+        round-robin mode signal; clearing it (``[]``) leaves broadcast
+        mode. The coordinator is the only mutator, so we apply them
+        here under the lock.
 
         ``advance_turn_pointer`` is read at turn-close time (see
         :meth:`_close_user_turn_locked`), not here.
         """
-        if plan.set_turn_taking_mode is not None:
-            self.state.set_turn_taking_mode(
-                cast(TurnTakingMode, plan.set_turn_taking_mode))
         if plan.set_turn_order is not None:
             self.state.set_turn_order(plan.set_turn_order)
 
@@ -701,7 +883,7 @@ class RoomCoordinator:
             # gate — the user has spoken, so the room may resume.
             if self.state.control.wait_for_user:
                 self.state.set_wait_for_user(False)
-                self.bus.post_internal(ev.floor_updated(wait_for_user=False))
+                self.bus.post_internal(ev.floor_updated(wait_for_user=False), auth=_KERNEL_AUTH)
 
             turn, next_oid = make_user_turn(
                 turn_id=self._next_user_turn_id,
@@ -722,7 +904,7 @@ class RoomCoordinator:
                 required_participants=sorted(plan.required_participants),
                 optional_participants=sorted(plan.optional_participants),
                 rationale=plan.rationale,
-            ))
+            ), auth=_KERNEL_AUTH)
             for ob in turn.obligations.values():
                 self.bus.post_internal(ev.obligation_recorded(
                     obligation_id=ob.id,
@@ -730,7 +912,7 @@ class RoomCoordinator:
                     level=ob.level,
                     target_event_ids=list(ob.target_event_ids),
                     reason=ob.reason,
-                ))
+                ), auth=_KERNEL_AUTH)
 
             # If the plan declared no required participants and no
             # optional participants, there's nothing to wait for —
@@ -765,20 +947,21 @@ class RoomCoordinator:
         self.bus.post_internal(ev.user_turn_closed(
             user_turn_id=self._user_turn.id,
             reason=reason,
-        ))
+        ), auth=_KERNEL_AUTH)
         # Apply ``wait_for_user_after`` from the plan now that the turn
         # is over. The flag stays set until the next user post (which
         # clears it inside ``open_user_turn``). It also fires for
         # cancelled turns — the user explicitly stopped the floor.
         if plan.wait_for_user_after and not self.state.control.wait_for_user:
             self.state.set_wait_for_user(True)
-            self.bus.post_internal(ev.floor_updated(wait_for_user=True))
+            self.bus.post_internal(ev.floor_updated(wait_for_user=True), auth=_KERNEL_AUTH)
         # Advance the round-robin rotation pointer if the closed plan
         # came from the rotation (``advance_turn_pointer=True``) and the
-        # mode is still active. ``@-mention`` / vocative overrides leave
-        # this flag False so the rotation slot is preserved.
+        # rotation is still armed (``turn_order`` non-empty).
+        # ``@-mention`` / vocative overrides leave this flag False so the
+        # rotation slot is preserved.
         if (plan.advance_turn_pointer
-                and self.state.control.turn_taking_mode == "round_robin"):
+                and self.state.control.turn_order):
             self.state.advance_round_robin_pointer()
 
     def _maybe_close_user_turn_locked(self) -> None:
@@ -824,6 +1007,54 @@ class RoomCoordinator:
                     self._close_user_turn_locked("obligation_unresolved")
                 else:
                     self._close_user_turn_locked("idle_timeout")
+
+    # ------------------------------------------------------------------
+    # Watchdog thread (v0.2)
+    # ------------------------------------------------------------------
+
+    def start_watchdog(self) -> None:
+        """Start the dedicated watchdog thread.
+
+        Idempotent: re-calling is a no-op while the thread is alive.
+        Runs :meth:`check_idle_timeout` every
+        ``config.watchdog_interval_s`` seconds until
+        :meth:`stop_watchdog` is called. Exceptions in the loop body
+        are swallowed — the watchdog is best-effort and must not
+        crash on a single bad tick.
+        """
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            return
+        self._watchdog_stop_event.clear()
+        self._watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            name="loom-coord-watchdog",
+            daemon=True,
+        )
+        self._watchdog_thread.start()
+
+    def stop_watchdog(self, *, timeout: float = 1.0) -> None:
+        """Signal the watchdog thread to exit and wait for it.
+
+        Idempotent: re-calling on a stopped watchdog is a no-op.
+        """
+        self._watchdog_stop_event.set()
+        thread = self._watchdog_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout)
+        self._watchdog_thread = None
+
+    def _watchdog_loop(self) -> None:
+        interval = max(0.05, float(self.config.watchdog_interval_s))
+        while not self._watchdog_stop_event.is_set():
+            try:
+                self.check_idle_timeout()
+            except Exception:
+                # Best-effort: never crash on a single bad tick.
+                pass
+            # ``Event.wait`` returns True if the event was set, False on
+            # timeout — either way we re-enter the loop and the
+            # condition above decides whether to exit.
+            self._watchdog_stop_event.wait(timeout=interval)
 
     # ------------------------------------------------------------------
     # Obligation helpers
@@ -878,7 +1109,7 @@ class RoomCoordinator:
                     obligation_id=obligation_id,
                     participant_id=ob.participant_id,
                     resolved_by_event_id=by_event_id,
-                ))
+                ), auth=_KERNEL_AUTH)
 
     # ------------------------------------------------------------------
     # Leases
@@ -908,58 +1139,30 @@ class RoomCoordinator:
         so chains close at ``max_responses``.
         """
         with self._lock:
-            if not self._user_turn or self._user_turn.state != "open":
-                return None
-            if holder not in self.state.participants:
-                return None
-            p = self.state.participants[holder]
-            if not p.active:
-                return None
+            checks = (self.config.lease_checks or DEFAULT_LEASE_CHECKS)
+            for chk in checks:
+                try:
+                    result = chk.check(
+                        holder=holder,
+                        trigger_event_id=trigger_event_id,
+                        is_direct_mention=is_direct_mention,
+                        coordinator=self,
+                    )
+                except Exception as exc:
+                    result = LeaseCheckResult(
+                        False, f"check_raised:{type(exc).__name__}")
+                if not result.passed:
+                    self.bus.post_internal(
+                        ev.lease_denied(
+                            holder=holder,
+                            check_name=chk.name,
+                            deny_reason=result.deny_reason or "denied",
+                            trigger_event_id=trigger_event_id,
+                        ),
+                        auth=_KERNEL_AUTH)
+                    return None
 
             ut = self._user_turn
-            plan = ut.frozen_plan
-
-            # Allowed-speakers gate. Direct user mention bypasses (the
-            # user explicitly addressed them; the floor narrowing in the
-            # plan was implicit). Plans with empty ``allowed_speakers``
-            # (e.g. legacy callers) fall back to the old check.
-            if plan.allowed_speakers:
-                if holder not in plan.allowed_speakers and not is_direct_mention:
-                    return None
-            else:
-                has_obligation = ut.obligation_for(holder) is not None
-                is_optional = holder in ut.optional_participants
-                if not (has_obligation or is_optional or is_direct_mention):
-                    return None
-
-            if not is_direct_mention:
-                cap = self.config.max_drafts_per_participant
-                if ut.speaker_counts.get(holder, 0) >= cap:
-                    return None
-
-            # ``max_responses`` cap — concurrency-safe gate. Counts
-            # already-committed drafts plus outstanding valid leases for
-            # this turn whose holder hasn't yet committed (a committed
-            # lease is already accounted for via ``ut.drafted``). Direct
-            # user mention bypasses the cap.
-            if not is_direct_mention:
-                cap_max = plan.max_responses
-                if cap_max > 0:
-                    committed = len(ut.drafted)
-                    outstanding = sum(
-                        1 for lease in self._leases.values()
-                        if lease.user_turn_id == ut.id and lease.valid
-                        and lease.holder not in ut.drafted
-                    )
-                    if committed + outstanding >= cap_max:
-                        return None
-
-            if not self._throttle.try_consume(holder, "main"):
-                return None
-
-            if not self._budget.can_acquire(ut.id):
-                return None
-
             # P3.3 / audit TIME1: lease bookkeeping uses time.monotonic
             # so an NTP step cannot widen or shrink the validity window.
             now = time.monotonic()

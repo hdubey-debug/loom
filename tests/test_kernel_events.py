@@ -149,10 +149,12 @@ class ControlEvents(unittest.TestCase):
         self.assertEqual(e.body["roles"], {"loom": "teacher"})
 
     def test_floor_updated_omits_unspecified_fields(self):
-        e = ev.floor_updated(floor_owner=[], wait_for_user=False)
+        # v0.2: ``floor_owner`` removed from kernel state; the
+        # ``floor_updated`` event now carries only ``wait_for_user``.
+        e = ev.floor_updated(wait_for_user=False)
         self.assertEqual(ev.control_type_of(e), "floor_updated")
-        self.assertEqual(e.body["floor_owner"], [])
         self.assertFalse(e.body["wait_for_user"])
+        self.assertNotIn("floor_owner", e.body)
         self.assertNotIn("active_goal", e.body)
 
     def test_style_changed(self):
@@ -358,7 +360,7 @@ class EventInvariants(unittest.TestCase):
                 original_mention_event_id=0, reason="r"),
             ev.default_responder_changed("loom", "claude"),
             ev.roles_assigned({"loom": "teacher"}),
-            ev.floor_updated(floor_owner=["loom"]),
+            ev.floor_updated(wait_for_user=True),
             ev.style_changed("normal", "brief"),
             ev.journal_error("OSError", "disk full"),
             ev.actor_error("loom", "RuntimeError", "boom"),

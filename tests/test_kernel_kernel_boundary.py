@@ -103,6 +103,24 @@ class KernelImportBoundary(unittest.TestCase):
             "policy must not import loom.kernel.journal; "
             f"offenders: {offenders}")
 
+    def test_policy_does_not_import_kernel_auth_token(self):
+        # ``_KERNEL_AUTH`` is the privileged sentinel that unlocks
+        # ``MessageBus.post_internal``. Policies are pure planners; they
+        # may not acquire the token — even by referencing the name.
+        forbidden = re.compile(
+            r"\b_KERNEL_AUTH\b|\b_KernelAuth\b",
+            re.MULTILINE,
+        )
+        offenders: list[str] = []
+        for path in _python_files(_LOOM_POLICY_DIR):
+            text = path.read_text()
+            if forbidden.search(text):
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+        self.assertEqual(
+            offenders, [],
+            "policy must not reference the kernel auth token; "
+            f"offenders: {offenders}")
+
 
 class PolicyPurity(unittest.TestCase):
     """Invariant 3 — policy modules must not mutate state or post events."""
@@ -254,7 +272,6 @@ class PolicyReceivesReadOnlyView(unittest.TestCase):
         state = RoomState(config=RoomConfig())
         state.add_participant(ParticipantInfo(id="loom", cost_tier=0))
         state.add_participant(ParticipantInfo(id="claude", cost_tier=1))
-        state.set_floor_owner(["loom"])
         state.set_turn_order(["loom", "claude"])
         return state, state.view()
 
@@ -278,12 +295,6 @@ class PolicyReceivesReadOnlyView(unittest.TestCase):
         with self.assertRaises(TypeError):
             view.control.turn_order[0] = "x"  # type: ignore[index]
 
-    def test_control_floor_owner_is_immutable(self):
-        _, view = self._live_state_and_view()
-        self.assertEqual(view.control.floor_owner, ("loom",))
-        with self.assertRaises(AttributeError):
-            view.control.floor_owner.append("claude")  # type: ignore[attr-defined]
-
     def test_top_level_fields_are_frozen(self):
         _, view = self._live_state_and_view()
         # ``frozen=True`` makes attribute assignment raise.
@@ -291,14 +302,17 @@ class PolicyReceivesReadOnlyView(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             view.room_epoch = 999  # type: ignore[misc]
 
-    def test_view_reads_reflect_live_state(self):
-        # Pre-existing reads still work — the view is a window, not a
-        # copy. Mutating the underlying state shows up on the view.
+    def test_view_participants_snapshot_at_call(self):
+        # Per-participant entries are captured at view() time so the
+        # frozen ParticipantInfoView wrapping is well-defined. Adding
+        # a new participant after view() is taken is NOT reflected in
+        # that view; the underlying state still updates and a fresh
+        # view() will see the new participant.
         state, view = self._live_state_and_view()
         self.assertEqual(view.participants["loom"].cost_tier, 0)
         state.add_participant(ParticipantInfo(id="late", cost_tier=2))
-        # The view's MappingProxyType wraps the live dict.
-        self.assertIn("late", view.participants)
+        self.assertNotIn("late", view.participants)
+        self.assertIn("late", state.view().participants)
 
 
 if __name__ == "__main__":

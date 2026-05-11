@@ -95,9 +95,12 @@ def test_restore_state_handles_arbitrary_top_level_dicts(state_data):
             st.sampled_from(["brief", "normal", "detailed"]),
             st.text(max_size=10),  # potentially invalid
         ),
+        # v3/v4 snapshots may carry the retired ``turn_taking_mode``
+        # field; restore_state ignores it in v5+. Including arbitrary
+        # values here verifies the field is tolerated.
         "turn_taking_mode": st.one_of(
             st.sampled_from(["broadcast", "round_robin"]),
-            st.text(max_size=10),  # potentially invalid
+            st.text(max_size=10),
         ),
     }),
 )
@@ -106,7 +109,8 @@ def test_restore_state_clamps_and_filters_control(control_data):
     cfg = RoomConfig()
     state_data = {"version": 3, "control": control_data}
     s = restore_state(state_data, cfg)
-    # Invariants: next_speaker_idx never negative; style is valid; ttm valid.
+    # Invariants: next_speaker_idx never negative; style is valid;
+    # turn_order is a list (never the raw text/none from the input).
     assert s.control.next_speaker_idx >= 0
     assert s.control.style in ("brief", "normal", "detailed")
-    assert s.control.turn_taking_mode in ("broadcast", "round_robin")
+    assert isinstance(s.control.turn_order, list)

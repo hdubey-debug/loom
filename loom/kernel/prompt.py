@@ -130,6 +130,9 @@ class _FallbackPolicy:
 
     name = "fallback"
 
+    def charter_text(self, state: RoomStateView) -> str:
+        return ""
+
     def system_prompt(self, participant_id: str,
                       state: RoomStateView) -> str:
         return ""
@@ -451,12 +454,20 @@ def build_prompt(
     # ------------------------------------------------------------------
     # KERNEL CHARTER — rendered immediately after the preamble header,
     # before persona / topic / participant id. Always present; the policy
-    # appends below; the charter cannot be removed by a policy and is
-    # never preceded by policy- or consumer-supplied text.
+    # may append a charter addendum (``charter_text``) but the kernel
+    # block is never preceded by policy- or consumer-supplied text.
     system_parts: list[str] = [
         "<<<SYSTEM PREAMBLE>>>",
         LOOM_PROTOCOL_INSTRUCTIONS,
     ]
+    state_view = state.view()
+    # ``charter_text`` is part of the ConversationPolicy ABC (default
+    # returns "" or a round-robin advisory). ``getattr`` defends
+    # against third-party stub policies that predate the hook.
+    _charter_fn = getattr(policy, "charter_text", None)
+    policy_charter = _charter_fn(state_view) if _charter_fn else ""
+    if policy_charter and policy_charter.strip():
+        system_parts.append(policy_charter)
     if persona:
         # PI1 / P0.8: persona is operator-supplied at runtime wiring time
         # but the kernel doesn't get to audit each call site, so apply
@@ -473,7 +484,7 @@ def build_prompt(
     # Policy-supplied additional system instructions (mode hints,
     # protocol extensions). Empty for the bare kernel. The policy sees
     # a read-only :class:`RoomStateView`, never the live ``RoomState``.
-    state_view = state.view()
+    # ``state_view`` was constructed above (charter_text); reuse it.
     policy_sys = policy.system_prompt(actor_id, state_view) or ""
     if policy_sys.strip():
         system_parts.append(policy_sys)
@@ -498,6 +509,28 @@ def build_prompt(
             "Other participants you may @-mention: "
             + ", ".join(sorted(other_participants))
         )
+
+    # Policy-supplied extra sections (v0.2 ``prompt_sections`` hook).
+    # Empty for the bare kernel and all bundled policies. Each
+    # section's ``name`` becomes a short header so prompt diffs are
+    # attributable.
+    _sections_fn = getattr(policy, "prompt_sections", None)
+    if _sections_fn is not None:
+        try:
+            extra_sections = _sections_fn(
+                state=state_view,
+                participant_id=actor_id,
+                trigger_event=trigger_event,
+            ) or []
+        except Exception:
+            extra_sections = []
+        for section in extra_sections:
+            name = getattr(section, "name", "")
+            text = getattr(section, "text", "")
+            if not (isinstance(text, str) and text.strip()):
+                continue
+            header = f"<<<{name.upper()}>>>" if name else "<<<SECTION>>>"
+            system_parts.append(f"{header}\n{text}")
 
     # ------------------------------------------------------------------
     # 2. Latest summary

@@ -61,6 +61,23 @@ UnbindHandle = Callable[[], None]
 DEFAULT_MAX_BODY_BYTES = 256 * 1024  # 256 KB — RES4 / P2.1 default cap
 
 
+class _KernelAuth:
+    """Sentinel granting privileged :meth:`MessageBus.post_internal` access.
+
+    Module-private by convention: the only legitimate instance is
+    :data:`_KERNEL_AUTH`, defined immediately below and never
+    re-exported from :mod:`loom`. The kernel boundary contract is
+    enforced both statically (policy modules must not import from
+    :mod:`loom.kernel.bus`) and structurally (``post_internal`` checks
+    ``auth is _KERNEL_AUTH`` by identity, so a different
+    ``_KernelAuth()`` constructed from elsewhere does not unlock it).
+    """
+    __slots__ = ()
+
+
+_KERNEL_AUTH: "_KernelAuth" = _KernelAuth()
+
+
 class BodyOversizeError(LoomError, ValueError):
     """Raised by :meth:`MessageBus.post` when a chat / system / summary
     event's string body exceeds the bus's configured ``max_body_bytes``
@@ -185,12 +202,20 @@ class MessageBus:
             )
         return self._post_unchecked(ev)
 
-    def post_internal(self, ev: Event) -> int:
+    def post_internal(self, ev: Event, *, auth: "_KernelAuth") -> int:
         """Privileged post — bypasses the thread-actor binding check.
 
-        Same semantics as :meth:`post` otherwise. Use only from
-        kernel-internal call sites that legitimately emit events with
-        a sender other than the calling thread's bound actor:
+        Same semantics as :meth:`post` otherwise. Requires the caller
+        to supply the module-private :data:`_KERNEL_AUTH` token via
+        the ``auth`` keyword argument; any other value (including
+        ``None`` or a freshly constructed :class:`_KernelAuth`) raises
+        :class:`RuntimeError`. The identity check elevates the
+        previously convention-only "kernel-internal callers only" rule
+        into a structural guarantee — policy code cannot acquire the
+        token because :mod:`loom.kernel.bus` is unreachable from
+        :mod:`loom.policy` (kernel/policy import boundary).
+
+        Legitimate kernel-internal call sites:
 
         - The coordinator (sender = "system" for control events).
         - The runtime (sender = "user" for human input).
@@ -204,12 +229,17 @@ class MessageBus:
         - The actor's own crash-handler (``actor_error`` with sender =
           "system" from the actor's own bound thread).
 
-        Calling this from non-kernel code (tests, examples) is fine —
-        the security contract is "the kernel itself uses post_internal
-        when it knows it is the privileged caller." Nothing structural
-        prevents misuse, but the name makes review-time auditing
-        straightforward.
+        Test code and benchmarks may import :data:`_KERNEL_AUTH`
+        directly — they live in-tree and are part of the trust
+        boundary. The name's leading underscore and the absence from
+        :mod:`loom` re-exports keep external consumers from picking it
+        up by accident.
         """
+        if auth is not _KERNEL_AUTH:
+            raise RuntimeError(
+                "post_internal requires the kernel-private _KERNEL_AUTH "
+                "token; this method is reserved for kernel-internal "
+                "callers (coordinator/runtime/journal/actor crash path)")
         return self._post_unchecked(ev)
 
     def _post_unchecked(self, ev: Event) -> int:
@@ -220,6 +250,18 @@ class MessageBus:
         and authenticated callers (``post``) get the same defense.
         Stream-delta bodies are exempt — those are bounded at the
         proxy boundary, where chunk size is naturally limited.
+
+        v0.2: subscriber fan-out runs AFTER the bus lock is released.
+        The append + ``notify_all`` are protected (preserves the
+        ``ev.id == position`` invariant); subscriber callbacks run
+        without the lock so a slow subscriber cannot block other
+        writers. ``self._subscribers`` is an immutable tuple
+        snapshotted under the lock, so concurrent
+        subscribe/unsubscribe is safe — the loop sees the snapshot
+        from lock-release time. Across-subscriber ordering is
+        relaxed: a subscriber may observe event N before another
+        subscriber observes event N-1, but each subscriber still
+        sees events in append order.
         """
         if ev.kind in ("chat", "system", "summary"):
             body = ev.body
@@ -235,16 +277,15 @@ class MessageBus:
             ev.ts = time.time()
             self._log.append(ev)
             self._cond.notify_all()
-            # ``self._subscribers`` is an immutable tuple — iterating it
-            # directly is safe (subscribe/unsubscribe rebuild the tuple
-            # under this same lock, but the loop sees the snapshot
-            # captured at lock-acquire time).
-            for cb in self._subscribers:
-                try:
-                    cb(ev)
-                except Exception:
-                    # A misbehaving subscriber must not break the bus.
-                    pass
+            subscribers_snapshot = self._subscribers
+        # Lock released. Fan out without holding it so a slow callback
+        # cannot freeze the next ``post``.
+        for cb in subscribers_snapshot:
+            try:
+                cb(ev)
+            except Exception:
+                # A misbehaving subscriber must not break the bus.
+                pass
         return ev.id
 
     # ------------------------------------------------------------------

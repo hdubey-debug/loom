@@ -3,13 +3,13 @@
 The :class:`DefaultPolicy` reproduces v0.0 ``loom.chat.loom.interpreter``
 behavior. Two top-level paths:
 
-**A. Round-robin mode active** (``state.control.turn_taking_mode ==
-"round_robin"``) — auto-enabled by the game-start detector below.
+**A. Round-robin mode active** (``state.control.turn_order`` is
+non-empty) — auto-enabled by the game-start detector below.
 
   R1. Game-end phrase ("good game", "let's stop", "new topic") —
       returns an acknowledgement-style plan whose
-      ``set_turn_taking_mode="broadcast"`` instructs the coordinator to
-      drop back to broadcast on open. No turn opens.
+      ``set_turn_order=[]`` instructs the coordinator to drop back to
+      broadcast on open. No turn opens.
   R2. Direct ``@-mention`` — same plan as broadcast Case 1, but
       ``advance_turn_pointer=False`` so the rotation slot is preserved.
   R3. Acknowledgement — same as broadcast Case 2 (no turn).
@@ -35,15 +35,16 @@ behavior. Two top-level paths:
    (so ``claude_code`` is matched by ``claude``). Generic words
    (``you``, ``guys``, ``team``, ``ai``, etc.) are blacklisted to avoid
    false positives. Behaves like a direct mention.
-4. **Closed floor** — :attr:`RoomControlState.floor_owner` is set to a
-   non-empty list. ``allowed_speakers = required = floor_owner ∩
-   active_capable``; ``wait_for_user_after = True``.
+4. **(Closed floor — removed in v0.2.)** Cross-turn floor narrowing
+   is no longer a built-in DefaultPolicy case; the
+   ``RoomControlState.floor_owner`` field is gone. Custom policies that
+   want narrowing should override :meth:`plan_user_turn`.
 5. **Game start (auto round-robin)** — phrase like "let's play a game",
    "20 questions", "take turns" with ≥2 active capable participants.
    The opening turn broadcasts (so each agent can propose / accept the
-   game), but the plan carries ``set_turn_taking_mode="round_robin"``
-   and ``set_turn_order=sorted(active_capable)`` so subsequent user
-   posts route through path A.
+   game), but the plan carries
+   ``set_turn_order=sorted(active_capable)`` so subsequent user posts
+   route through path A.
 6. **Broadcast (default)** — every other user message goes to every
    active capable participant as a ``must`` obligation.
    ``allowed_speakers = required = all active capable``;
@@ -211,24 +212,6 @@ def _instruction_for_directed(addressed: list[str],
     return " ".join(parts)
 
 
-def _instruction_for_floor(floor_active: list[str],
-                           control: RoomControlStateView,
-                           topic: Optional[str] = None) -> str:
-    del control
-    parts: list[str] = []
-    if len(floor_active) == 1:
-        parts.append(
-            f"You ({floor_active[0]}) hold the floor. "
-            "Continue the task; do not invite other agents.")
-    else:
-        parts.append(
-            "Floor is narrowed to a fixed set; do not invite agents "
-            "outside the floor.")
-    if topic:
-        parts.append(f"Topic: {topic}")
-    return " ".join(parts)
-
-
 def _instruction_for_broadcast(control: RoomControlStateView,
                                topic: Optional[str] = None) -> str:
     del control
@@ -317,9 +300,9 @@ class DefaultPolicy(ConversationPolicy):
         mentioned = parse_addressees(text, active_capable, exclude="user")
 
         # ==============================================================
-        # Path A — Round-robin mode active.
+        # Path A — Round-robin mode active (turn_order non-empty).
         # ==============================================================
-        if control.turn_taking_mode == "round_robin":
+        if control.turn_order:
 
             # R1: Game-end phrase — exit the mode and skip the turn.
             if _GAME_END_RE.search(text):
@@ -327,7 +310,6 @@ class DefaultPolicy(ConversationPolicy):
                     target_event_ids=target_event_ids,
                     rationale="game-end phrase — exit round-robin",
                 )
-                plan.set_turn_taking_mode = "broadcast"
                 plan.set_turn_order = []
                 return plan
 
@@ -441,22 +423,11 @@ class DefaultPolicy(ConversationPolicy):
                 instruction=_instruction_for_directed(vocative, control, state.topic),
             )
 
-        # Case 4: Closed floor.
-        floor = control.floor_owner
-        if floor:
-            floor_active = [pid for pid in floor if pid in active_capable]
-            if floor_active:
-                return obl.plan_with_required(
-                    floor_active,
-                    routing_case="multi_opinion",
-                    target_event_ids=target_event_ids,
-                    reason="floor_narrowed",
-                    rationale=f"floor: {', '.join(floor_active)}",
-                    allowed_speakers=set(floor_active),
-                    max_responses=len(floor_active),
-                    wait_for_user_after=True,
-                    instruction=_instruction_for_floor(floor_active, control, state.topic),
-                )
+        # Case 4: (Closed floor — removed in v0.2 along with
+        # ``RoomControlState.floor_owner``. Policies that need narrowing
+        # across turns should subclass DefaultPolicy and override
+        # ``plan_user_turn``; the kernel no longer carries a persistent
+        # narrowed-speakers field.)
 
         # Case 5: Game start (auto round-robin).
         if len(active_capable) >= 2 and _GAME_START_RE.search(text):
@@ -473,7 +444,6 @@ class DefaultPolicy(ConversationPolicy):
                 max_responses=len(active_capable),
                 wait_for_user_after=True,
                 instruction=_instruction_for_game_start(active_capable, control, state.topic),
-                set_turn_taking_mode="round_robin",
                 set_turn_order=order,
             )
 

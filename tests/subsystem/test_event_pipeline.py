@@ -336,7 +336,6 @@ class TestJournalUnderPressure:
         original.set_anchor("loom")
         original.set_topic("design review")
         original.set_roles({"loom": "teacher"})
-        original.set_floor_owner(["loom"])
         original.set_style("brief")
         # P2.3: active_goal collapsed into topic; topic already set above.
 
@@ -353,7 +352,6 @@ class TestJournalUnderPressure:
         assert sorted(current.participants.keys()) == \
             sorted(original.participants.keys())
         assert current.control.roles == original.control.roles
-        assert current.control.floor_owner == original.control.floor_owner
         assert current.control.style == original.control.style
 
 

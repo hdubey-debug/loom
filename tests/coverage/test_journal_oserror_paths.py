@@ -322,8 +322,8 @@ def test_restore_state_with_invalid_turn_order_uses_empty_list(tmp_path):
     assert s.control.turn_order == []
 
 
-def test_restore_state_with_invalid_floor_owner_falls_back_to_none(tmp_path):
-    """Covers: journal.py:460-462 — non-list floor_owner → None."""
+def test_restore_state_tolerates_legacy_floor_owner_field(tmp_path):
+    """v0.2: legacy v3/v4 snapshots may carry ``floor_owner``; restore ignores it."""
     cfg = RoomConfig()
     state_data = {
         "version": 3,
@@ -332,8 +332,10 @@ def test_restore_state_with_invalid_floor_owner_falls_back_to_none(tmp_path):
             "style": "normal",
         },
     }
+    # Restore must not crash on the legacy field and the resulting
+    # control state must not carry it.
     s = restore_state(state_data, cfg)
-    assert s.control.floor_owner is None
+    assert not hasattr(s.control, "floor_owner")
 
 
 def test_restore_state_with_invalid_roles_falls_back_to_empty(tmp_path):
@@ -363,8 +365,8 @@ def test_restore_state_with_unknown_style_defaults_to_normal(tmp_path):
     assert s.control.style == "normal"
 
 
-def test_restore_state_with_unknown_ttm_defaults_to_broadcast(tmp_path):
-    """Covers: journal.py:468-470 — unknown turn_taking_mode → broadcast."""
+def test_restore_state_with_legacy_ttm_field_is_tolerated(tmp_path):
+    """v3/v4 snapshots may carry a ``turn_taking_mode`` field; v5 ignores it."""
     cfg = RoomConfig()
     state_data = {
         "version": 3,
@@ -373,5 +375,7 @@ def test_restore_state_with_unknown_ttm_defaults_to_broadcast(tmp_path):
             "turn_taking_mode": "completely_made_up",
         },
     }
+    # Restore must not crash on the unknown legacy field; turn_order
+    # (the v5 round-robin signal) defaults to empty.
     s = restore_state(state_data, cfg)
-    assert s.control.turn_taking_mode == "broadcast"
+    assert s.control.turn_order == []

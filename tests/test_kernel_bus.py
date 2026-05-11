@@ -7,7 +7,7 @@ import time
 import unittest
 
 from loom.kernel import events as ev
-from loom.kernel.bus import MessageBus, visible_to
+from loom.kernel.bus import _KERNEL_AUTH, _KernelAuth, MessageBus, visible_to
 
 
 class PostingAssignsIds(unittest.TestCase):
@@ -308,6 +308,105 @@ class RenderMemo(unittest.TestCase):
         e = ev.user_turn_closed(user_turn_id=1, reason="completed")
         bus.post(e)
         self.assertIs(bus.render_control_line(e), bus.render_control_line(e))
+
+
+class LockReleasedFanOut(unittest.TestCase):
+    """v0.2: subscriber fan-out runs AFTER the bus lock is released.
+
+    Slow subscribers must not block other writers. The append +
+    notify_all are still under the lock (preserves
+    ``ev.id == position``), but each subscriber runs without the lock
+    so a slow callback cannot freeze the bus.
+    """
+
+    def test_slow_subscriber_does_not_hold_bus_lock(self):
+        # While a slow subscriber is mid-flight on one writer thread,
+        # readers (snapshot/get/__len__) on the main thread must not
+        # block on the bus lock. Pre-v0.2 the lock was held across
+        # subscriber fan-out, freezing every reader until the
+        # subscriber returned.
+        import threading as _t
+        import time as _time
+        bus = MessageBus()
+        slow_called = _t.Event()
+        slow_release = _t.Event()
+
+        def _slow(event):
+            slow_called.set()
+            slow_release.wait(timeout=2.0)
+
+        bus.subscribe(_slow)
+
+        def _stuck_writer():
+            bus.post(ev.chat(sender="user", body="first"))
+
+        stuck = _t.Thread(target=_stuck_writer)
+        stuck.start()
+        slow_called.wait(timeout=1.0)
+        self.assertTrue(slow_called.is_set(), "subscriber never fired")
+
+        # Slow subscriber is mid-flight. Readers on the main thread
+        # must complete quickly because the bus lock is free.
+        t0 = _time.monotonic()
+        n = len(bus)
+        snap = bus.snapshot()
+        got = bus.get(0)
+        elapsed = _time.monotonic() - t0
+        self.assertEqual(n, 1)
+        self.assertEqual(len(snap), 1)
+        self.assertIsNotNone(got)
+        self.assertLess(
+            elapsed, 0.1,
+            f"reader paths blocked for {elapsed:.3f}s — bus lock "
+            "must be released before subscriber fan-out")
+
+        # Release the slow callback so the stuck thread can finish.
+        slow_release.set()
+        stuck.join(timeout=2.0)
+        self.assertFalse(stuck.is_alive())
+
+
+class KernelAuthRequired(unittest.TestCase):
+    """Hardens invariant 9 — post_internal requires _KERNEL_AUTH token.
+
+    Replaces the old "5 closed callers" convention with a structural
+    identity check. Policy code cannot acquire the token because the
+    kernel/policy import boundary forbids `loom.policy.*` from
+    importing `loom.kernel.bus`.
+    """
+
+    def test_post_internal_without_auth_raises(self):
+        bus = MessageBus()
+        e = ev.chat(sender="system", body="x")
+        with self.assertRaises(TypeError):
+            # ``auth`` is required keyword-only; omitting it must error
+            # at the call boundary.
+            bus.post_internal(e)  # type: ignore[call-arg]
+
+    def test_post_internal_wrong_auth_raises(self):
+        bus = MessageBus()
+        e = ev.chat(sender="system", body="x")
+        # A separately constructed _KernelAuth() is not the singleton —
+        # identity check fails.
+        impostor = _KernelAuth()
+        with self.assertRaises(RuntimeError):
+            bus.post_internal(e, auth=impostor)
+        # ``None`` and other non-_KernelAuth values must also fail.
+        with self.assertRaises(RuntimeError):
+            bus.post_internal(e, auth=None)  # type: ignore[arg-type]
+
+    def test_post_internal_with_correct_auth_succeeds(self):
+        bus = MessageBus()
+        e = ev.chat(sender="system", body="x")
+        rid = bus.post_internal(e, auth=_KERNEL_AUTH)
+        self.assertEqual(rid, 0)
+
+    def test_kernel_auth_not_re_exported_from_loom_init(self):
+        import loom
+        # The token is module-private to loom.kernel.bus and must not
+        # leak into the public ``loom`` surface.
+        self.assertFalse(hasattr(loom, "_KERNEL_AUTH"))
+        self.assertFalse(hasattr(loom, "_KernelAuth"))
 
 
 if __name__ == "__main__":

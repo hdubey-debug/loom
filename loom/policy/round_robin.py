@@ -1,9 +1,9 @@
 """Loom round-robin policy — one participant per user post, in fixed order.
 
-The first user post arms round-robin mode (``set_turn_taking_mode`` +
-``set_turn_order``) and routes to the first live participant in the
-configured order. Subsequent posts route to the rotation pointer the
-kernel maintains. ``advance_turn_pointer=True`` is set on every plan
+The first user post arms round-robin mode (``set_turn_order`` populated
+with the configured order; a non-empty ``turn_order`` is itself the
+round-robin mode signal). Subsequent posts route to the rotation pointer
+the kernel maintains. ``advance_turn_pointer=True`` is set on every plan
 so the kernel rotates on close.
 
 Removing a participant mid-rotation is handled by skipping inactive ids
@@ -12,10 +12,9 @@ across the gap. If no configured participants are currently active and
 capable, the turn becomes an acknowledgement.
 
 Reference for authors: this is the only built-in policy that mutates
-state declaratively (via ``set_turn_taking_mode`` /
-``set_turn_order`` / ``advance_turn_pointer`` on the
-:class:`UserTurnPlan`). It does NOT touch :class:`RoomState` or the
-bus directly — the kernel applies the requested transitions when
+state declaratively (via ``set_turn_order`` / ``advance_turn_pointer``
+on the :class:`UserTurnPlan`). It does NOT touch :class:`RoomState` or
+the bus directly — the kernel applies the requested transitions when
 opening / closing the turn.
 """
 from __future__ import annotations
@@ -33,10 +32,9 @@ class RoundRobinPolicy(ConversationPolicy):
 
     Subclasses :class:`ConversationPolicy` directly (not
     :class:`loom.policy.BasicPolicy`) because the rotation logic needs
-    declarative state mutation on the plan (``set_turn_taking_mode``,
-    ``set_turn_order``, ``advance_turn_pointer``) — :class:`BasicPolicy`
-    is shaped for the simpler "filter responders, return must-plan"
-    case.
+    declarative state mutation on the plan (``set_turn_order``,
+    ``advance_turn_pointer``) — :class:`BasicPolicy` is shaped for the
+    simpler "filter responders, return must-plan" case.
     """
 
     name = "round_robin"
@@ -73,9 +71,9 @@ class RoundRobinPolicy(ConversationPolicy):
         }
         control = state.control
 
-        # First post — arm round-robin and pick the first live speaker
-        # from our configured order.
-        if control.turn_taking_mode != "round_robin":
+        # First post — arm round-robin (turn_order empty means broadcast)
+        # and pick the first live speaker from our configured order.
+        if not control.turn_order:
             speaker = self._first_live(self._order, active_capable)
             if speaker is None:
                 return obl.plan_for_acknowledgement(
@@ -93,7 +91,6 @@ class RoundRobinPolicy(ConversationPolicy):
                 max_responses=1,
                 wait_for_user_after=True,
                 instruction=self._instruction(speaker),
-                set_turn_taking_mode="round_robin",
                 set_turn_order=list(self._order),
                 advance_turn_pointer=True,
             )

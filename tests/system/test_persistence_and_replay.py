@@ -205,9 +205,9 @@ class TestSnapshotAccuracy:
             policy=RoundRobinPolicy(order),
         )
         assert restored is not None
-        # The snapshot's round-robin fields match live state at stop.
+        # The snapshot's round-robin fields match live state at stop;
+        # in v5 a non-empty ``turn_order`` is the round-robin signal.
         ctl = restored.get("control") or {}
-        assert ctl.get("turn_taking_mode") == "round_robin"
         assert ctl.get("turn_order") == order
         assert ctl.get("next_speaker_idx") == pre_idx
         # The new room's restored RoomState (constructed by passing the

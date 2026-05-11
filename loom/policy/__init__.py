@@ -22,8 +22,8 @@ Reference policies bundled with v0:
   Canonical reference for new policy authors.
 - :class:`RoundRobinPolicy`      — rotate through a fixed order, one
   speaker per user post. Reference for declarative state mutation
-  (``set_turn_taking_mode`` / ``set_turn_order`` /
-  ``advance_turn_pointer``).
+  (``set_turn_order`` / ``advance_turn_pointer``). A non-empty
+  ``turn_order`` is itself the round-robin mode signal.
 
 Plan-builder helpers (re-exported from :mod:`loom.kernel.obligations`
 so policy authors don't reach into ``loom.kernel.*``):
