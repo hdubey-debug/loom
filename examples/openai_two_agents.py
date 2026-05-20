@@ -14,6 +14,7 @@ provider. Replace ``base_url`` to talk to any OpenAI-compatible
 endpoint (Anthropic via OAI-compat, Gemini via OAI-compat, Together,
 Groq, vLLM, Ollama, ...).
 """
+
 from __future__ import annotations
 
 import os

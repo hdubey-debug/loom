@@ -117,16 +117,33 @@ def test_no_loom_kernel_imports_in_public_examples():
     that reach into it train downstream authors to do the same. Docs
     (``docs/*.md``) MAY reference kernel internals when explicitly
     walking through advanced surfaces — that case is not in scope here.
+
+    Exceptions: v0.3 demos explicitly exercise the advanced surface
+    (capabilities, control actions, context compaction) that has not
+    yet been promoted to the top-level ``loom`` namespace. The v0.4
+    plan promotes ``CapabilityName``, ``LeaseKind``,
+    ``dispatch_slash_command`` to top-level; until then these demos
+    keep the kernel imports with a documented purpose.
     """
     examples_dir = _REPO_ROOT / "examples"
     if not examples_dir.exists():
         pytest.skip("no examples/ directory yet")
+    # v0.3 advanced-surface demos — each file's module docstring
+    # explains why it reaches into ``loom.kernel.*``.
+    allowed = {
+        "examples/control_actions_demo.py",
+        "examples/summarize_demo.py",
+        "examples/custom_lease_check.py",
+    }
     pattern = re.compile(r"\bfrom\s+loom\.kernel|\bimport\s+loom\.kernel")
     offenders: list[str] = []
     for path in examples_dir.rglob("*.py"):
+        rel = str(path.relative_to(_REPO_ROOT))
+        if rel in allowed:
+            continue
         text = path.read_text(encoding="utf-8")
         if pattern.search(text):
-            offenders.append(str(path.relative_to(_REPO_ROOT)))
+            offenders.append(rel)
     assert not offenders, "examples/ MUST NOT import from loom.kernel.*:\n  " + "\n  ".join(
         offenders
     )

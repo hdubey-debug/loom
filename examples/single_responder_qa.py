@@ -11,6 +11,7 @@ use, single-model copilot.
 The agent here is scripted; swap ``expert_send`` for an OpenAI /
 Anthropic / Gemini call to point a real LLM at the room.
 """
+
 from __future__ import annotations
 
 from loom import LoomRoom, SingleResponderPolicy, agent_from_send

@@ -14,19 +14,21 @@ Imports come exclusively from the public ``loom.*`` surface — no
 ``loom.kernel.*`` reach-throughs. The UX contract test
 ``tests/property/test_ux_contracts.py`` enforces that boundary.
 """
+
 from __future__ import annotations
 
 from loom import LoomRoom, OpenChatPolicy, agent_from_send
 
 
 def alice_send(prompt: str) -> str:
-    return ("Alice: I'd start by clarifying the goal — what does "
-            "success look like for this turn?")
+    return "Alice: I'd start by clarifying the goal — what does success look like for this turn?"
 
 
 def bob_send(prompt: str) -> str:
-    return ("Bob: Agreed. I'd add: name the constraint that's binding "
-            "us, then enumerate the next two moves.")
+    return (
+        "Bob: Agreed. I'd add: name the constraint that's binding "
+        "us, then enumerate the next two moves."
+    )
 
 
 def main() -> None:

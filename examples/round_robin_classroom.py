@@ -11,6 +11,7 @@ strict-rotation scenario.
 
 No API key needed; the agents are scripted.
 """
+
 from __future__ import annotations
 
 from loom import LoomRoom, RoundRobinPolicy, agent_from_send
