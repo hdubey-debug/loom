@@ -90,6 +90,12 @@ Anchor / default-responder role:
 # Regexes — module-level so callers can monkeypatch in tests.
 # ---------------------------------------------------------------------------
 
+# Participant id reserved for the user-side actor. Excluded from
+# addressing scans so vocatives like "user, ..." or "@user" don't
+# resolve back to the speaker themselves. Centralized here so the
+# three call-sites stay in lockstep.
+_USER_PSEUDO_ID = "user"
+
 # Acknowledgement set — compared after lowercasing + stripping. Phrases
 # longer than three words are excluded automatically by the word-count
 # guard in ``_is_acknowledgement``.
@@ -287,11 +293,21 @@ def _pick_rotation_speaker(
     control: RoomControlStateView,
     active_capable: list[str],
 ) -> Optional[str]:
-    live = [pid for pid in control.turn_order if pid in active_capable]
-    if not live:
+    # Walk forward in the configured turn_order starting at the
+    # rotation pointer, returning the first live id. The earlier
+    # ``live[idx % len(live)]`` shape collapsed indices and shifted
+    # the visible rotation slot when ids ahead of the pointer went
+    # offline; this preserves the slot.
+    n = len(control.turn_order)
+    if n == 0:
         return None
-    idx = control.next_speaker_idx % len(live)
-    return live[idx]
+    active_set = set(active_capable)
+    start = control.next_speaker_idx % n
+    for offset in range(n):
+        candidate = control.turn_order[(start + offset) % n]
+        if candidate in active_set:
+            return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +344,7 @@ class DefaultPolicy(ConversationPolicy):
         )
         control = state.control
 
-        mentioned = parse_addressees(text, active_capable, exclude="user")
+        mentioned = parse_addressees(text, active_capable, exclude=_USER_PSEUDO_ID)
 
         # ==============================================================
         # Path A — Round-robin mode active (turn_order non-empty).
@@ -351,7 +367,7 @@ class DefaultPolicy(ConversationPolicy):
                     mentioned,
                     routing_case=case,
                     target_event_ids=target_event_ids,
-                    reason=case,
+                    reason="mention",
                     rationale=(f"@-mentioned (round-robin): {', '.join(mentioned)}"),
                     allowed_speakers=set(mentioned),
                     max_responses=len(mentioned),
@@ -368,7 +384,7 @@ class DefaultPolicy(ConversationPolicy):
                 )
 
             # R4: Vocative — same as direct mention.
-            vocative = _detect_vocative(text, active_capable, exclude="user")
+            vocative = _detect_vocative(text, active_capable, exclude=_USER_PSEUDO_ID)
             if vocative:
                 case = "multi_opinion" if len(vocative) >= 2 else "direct_mention"
                 case = cast(RoutingCase, case)
@@ -414,7 +430,7 @@ class DefaultPolicy(ConversationPolicy):
                 mentioned,
                 routing_case=case,
                 target_event_ids=target_event_ids,
-                reason=case,
+                reason="mention",
                 rationale=f"@-mentioned: {', '.join(mentioned)}",
                 allowed_speakers=set(mentioned),
                 max_responses=len(mentioned),
@@ -430,7 +446,7 @@ class DefaultPolicy(ConversationPolicy):
             )
 
         # Case 3: Vocative addressing.
-        vocative = _detect_vocative(text, active_capable, exclude="user")
+        vocative = _detect_vocative(text, active_capable, exclude=_USER_PSEUDO_ID)
         if vocative:
             case = "multi_opinion" if len(vocative) >= 2 else "direct_mention"
             case = cast(RoutingCase, case)

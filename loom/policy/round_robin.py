@@ -123,11 +123,20 @@ class RoundRobinPolicy(ConversationPolicy):
     def _pick_from_rotation(
         control: RoomControlStateView, active_capable: set[str]
     ) -> Optional[str]:
-        live = [pid for pid in control.turn_order if pid in active_capable]
-        if not live:
+        # Walk forward in the *configured* turn_order starting at the
+        # rotation pointer, returning the first live id. Earlier
+        # ``live[idx % len(live)]`` collapsed indices when participants
+        # ahead of the pointer went offline, shifting the visible slot
+        # contrary to the docstring.
+        n = len(control.turn_order)
+        if n == 0:
             return None
-        idx = control.next_speaker_idx % len(live)
-        return live[idx]
+        start = control.next_speaker_idx % n
+        for offset in range(n):
+            candidate = control.turn_order[(start + offset) % n]
+            if candidate in active_capable:
+                return candidate
+        return None
 
     @staticmethod
     def _instruction(speaker: str) -> str:

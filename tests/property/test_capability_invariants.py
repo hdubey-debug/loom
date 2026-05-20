@@ -154,8 +154,13 @@ def test_concurrent_actor_threads_each_see_own_binding():
 
 @given(target=participant_ids, other=participant_ids, body=st.text(max_size=40))
 def test_dm_never_visible_to_non_target(target, other, body):
-    if other == target:
-        return  # not a privacy violation
+    # The visibility contract (loom/kernel/bus.py:14) grants the
+    # user-side actor and the system pseudo-actor universal DM
+    # visibility — they are co-targets of every dm:* channel. The
+    # property under test is privacy from *third parties*, so audiences
+    # that are themselves co-targets are excluded.
+    if other in (target, "user", "system"):
+        return
     bus = MessageBus()
     bus.post_internal(ev.chat(sender="user", body=body, channel=f"dm:{target}"), auth=_KERNEL_AUTH)
     snap = bus.snapshot(audience=other)

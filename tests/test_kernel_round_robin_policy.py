@@ -113,6 +113,63 @@ class RoundRobinSubsequent(unittest.TestCase):
         self.assertFalse(plan.requires_response)
 
 
+class RoundRobinSlotPreservation(unittest.TestCase):
+    """Docstring contract: ``the visible rotation slot is preserved
+    across the gap`` when a participant is removed.
+
+    Concretely: when ``turn_order[next_speaker_idx]`` is itself live,
+    that participant should be picked. When the original target is
+    offline, walk forward in the configured order to the next live id.
+    """
+
+    def test_offline_earlier_id_does_not_shift_pointer(self):
+        # turn_order pointer is at index 2 (would pick "c"). "a" is
+        # offline. The rotation slot at index 2 is still "c" — it must
+        # not collapse into live[2 % 2] = live[0] = "b".
+        state = _state_with(("a", False, True), ("b", True, True), ("c", True, True))
+        state.control.turn_taking_mode = "round_robin"
+        state.control.turn_order = ["a", "b", "c"]
+        state.control.next_speaker_idx = 2
+        plan = RoundRobinPolicy(["a", "b", "c"]).plan_user_turn(
+            ev.chat(sender="user", body="next"), state
+        )
+        self.assertEqual(plan.required_participants, {"c"})
+
+    def test_two_simultaneous_offline_walks_forward(self):
+        # turn_order pointer is at index 1 (target "b"); "a" and "b"
+        # are both offline. Walking forward in the configured order
+        # lands on "c". The buggy ``idx % len(live)`` formula gives
+        # live[1] = "d".
+        state = _state_with(
+            ("a", False, True),
+            ("b", False, True),
+            ("c", True, True),
+            ("d", True, True),
+            ("e", True, True),
+        )
+        state.control.turn_taking_mode = "round_robin"
+        state.control.turn_order = ["a", "b", "c", "d", "e"]
+        state.control.next_speaker_idx = 1
+        plan = RoundRobinPolicy(["a", "b", "c", "d", "e"]).plan_user_turn(
+            ev.chat(sender="user", body="next"), state
+        )
+        self.assertEqual(plan.required_participants, {"c"})
+
+    def test_rejoin_restores_original_slot(self):
+        # Three-actor rotation. "b" left and rejoined while pointer
+        # advanced past it. Pointer is now at index 1 (target "b").
+        # With "b" live again, the pick must be "b", not whatever the
+        # filter+modulo formula yields under a different live order.
+        state = _state_with(("a", True, True), ("b", True, True), ("c", True, True))
+        state.control.turn_taking_mode = "round_robin"
+        state.control.turn_order = ["a", "b", "c"]
+        state.control.next_speaker_idx = 1
+        plan = RoundRobinPolicy(["a", "b", "c"]).plan_user_turn(
+            ev.chat(sender="user", body="next"), state
+        )
+        self.assertEqual(plan.required_participants, {"b"})
+
+
 class RoundRobinConstruction(unittest.TestCase):
     def test_empty_order_rejected(self):
         with self.assertRaises(ValueError):
