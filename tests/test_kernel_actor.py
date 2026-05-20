@@ -437,5 +437,142 @@ class IdleTimeoutWakeup(unittest.TestCase):
         self.assertEqual(actor.wakeup_timeout_s, 5.0)
 
 
+# ---------------------------------------------------------------------------
+# v0.2.1 PR 4 — cursor advance discipline (audit findings A1, A2, A4)
+# ---------------------------------------------------------------------------
+
+
+class CursorAdvanceOnDeny(unittest.TestCase):
+    """Denied trigger is re-pended for replay (audit A1).
+
+    Pre-fix: ``_decide_once`` advanced the cursor to ``max(snap)`` and
+    the trigger was lost on lease denial — no subsequent eligibility
+    change could re-pick it up.
+
+    Post-fix: cursor still advances unconditionally (so a kernel-
+    emitted ``lease_denied`` event doesn't tight-loop the actor via
+    ``bus.wait_after``), but the denied trigger is re-pended into
+    ``_pending_direct_mentions``, whose replay path in
+    ``_decide_once`` lifts it back into the next snap.
+    """
+
+    def _make(self, default_responder="loom"):
+        bus, state, coord = _setup(default_responder=default_responder)
+        calls: list[tuple[str, int]] = []
+
+        def handler(actor, trig, lease):
+            calls.append((actor.id, trig.id))
+            coord.on_stream_end(
+                lease, "committed", committed_text="ok", cost_tokens=1
+            )
+
+        return bus, state, coord, handler, calls
+
+    def test_denied_trigger_is_repended_for_replay(self):
+        # Inject a denying acquire_lease so the trigger fails. Verify
+        # the trigger lands in the replay LRU AND the denied set so a
+        # subsequent step doesn't immediately re-attempt under the same
+        # conditions (would tight-loop in async mode).
+        bus, state, coord, handler, calls = self._make()
+        actor = ParticipantActor("loom", bus, coord, handler)
+        original_acquire = coord.acquire_lease
+
+        def denying(*args, **kwargs):
+            return None
+
+        coord.acquire_lease = denying  # type: ignore[method-assign]
+
+        e = _user_post(bus, "hi")
+        _open_default(coord, e, "loom")
+        d1 = actor.step()
+        self.assertEqual(d1.action, "DRAFT")
+        self.assertEqual(d1.trigger_event_id, e.id)
+        # The trigger lives in the replay LRU after denial, and in the
+        # denied set so a no-change retry is suppressed.
+        self.assertIn(e.id, actor._pending_direct_mentions)
+        self.assertIn(e.id, actor._denied_trigger_ids)
+
+        # Without an eligibility change, the next step short-circuits
+        # to SKIP — no tight-loop re-attempt.
+        d_noop = actor.step()
+        self.assertEqual(d_noop.action, "SKIP")
+
+        # A fresh user post signals possible eligibility change and
+        # clears the denied set; restoring acquire_lease lets the
+        # replayed trigger get picked again. The new turn opens with
+        # loom as the default responder, so loom holds obligation on
+        # the new user post — that becomes the trigger.
+        coord.acquire_lease = original_acquire  # type: ignore[method-assign]
+        e2 = _user_post(bus, "still there?")
+        _open_default(coord, e2, "loom")
+        d2 = actor.step()
+        self.assertEqual(d2.action, "DRAFT")
+        # The denied set was cleared by the new user post.
+        self.assertNotIn(e.id, actor._denied_trigger_ids)
+
+    def test_granted_trigger_is_not_repended(self):
+        bus, state, coord, handler, calls = self._make()
+        actor = ParticipantActor("loom", bus, coord, handler)
+        e = _user_post(bus, "hi")
+        _open_default(coord, e, "loom")
+        d = actor.step()
+        self.assertEqual(d.action, "DRAFT")
+        # No re-pending: the grant path advanced cursor and consumed
+        # the trigger.
+        self.assertNotIn(e.id, actor._pending_direct_mentions)
+
+    def test_skip_does_not_repend(self):
+        bus, state, coord, _handler, _calls = self._make()
+        actor = ParticipantActor(
+            "claude_code", bus, coord, lambda *a, **k: None
+        )
+        e = _user_post(bus, "hi")  # broadcast → claude_code SKIPs
+        _open_default(coord, e, "loom")
+        d = actor.step()
+        self.assertEqual(d.action, "SKIP")
+        self.assertNotIn(e.id, actor._pending_direct_mentions)
+
+    def test_cursor_advances_to_max_snap_on_deny(self):
+        # Cursor still advances unconditionally — this guards against
+        # the lease_denied tight-loop regression. With cursor at
+        # max(snap), bus.wait_after blocks until a GENUINELY new
+        # external event arrives.
+        bus, state, coord, handler, _calls = self._make()
+        actor = ParticipantActor("loom", bus, coord, handler)
+
+        def denying(*args, **kwargs):
+            return None
+
+        coord.acquire_lease = denying  # type: ignore[method-assign]
+
+        e = _user_post(bus, "hi")
+        _open_default(coord, e, "loom")
+        actor.step()
+        self.assertGreaterEqual(actor._cursor, e.id)
+
+    def test_cursor_is_monotonic(self):
+        bus, state, coord, handler, _calls = self._make()
+        actor = ParticipantActor("loom", bus, coord, handler)
+        actor._cursor = 999_999
+        e = _user_post(bus, "hi")
+        _open_default(coord, e, "loom")
+        actor.step()
+        self.assertEqual(actor._cursor, 999_999)
+
+
+class AgentDecisionShape(unittest.TestCase):
+    """v0.2.1 PR 4 — ``AgentDecision`` dropped the unused
+    ``considered_event_ids`` field (audit A2)."""
+
+    def test_field_is_gone(self):
+        from dataclasses import fields
+        from loom.kernel.actor import AgentDecision
+
+        names = {f.name for f in fields(AgentDecision)}
+        self.assertNotIn("considered_event_ids", names)
+        # Sanity: the surviving fields are exactly the documented set.
+        self.assertEqual(names, {"action", "trigger_event_id", "reason"})
+
+
 if __name__ == "__main__":
     unittest.main()

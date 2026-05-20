@@ -63,6 +63,47 @@ class RoomConfig:
     # a non-empty tuple lets advanced consumers prepend, append, or
     # replace gates. Each gate emits ``lease_denied`` on rejection.
     lease_checks: tuple[Any, ...] = ()
+    # v0.3 PR 12 (closes audit D2): streaming-stall threshold. The
+    # coordinator's watchdog emits ``stream_stalled`` + closes the
+    # lease when a stream has produced no chunks for this many
+    # seconds despite an active lease. Default 30s — short enough to
+    # catch a hung provider on typical chat-latency expectations,
+    # long enough to tolerate normal LLM warm-up.
+    stream_stall_threshold_s: float = 30.0
+    # v0.3 PR 13 (closes audit D3): per-policy slow threshold. The
+    # coordinator emits ``policy_slow`` when ``classify_fn`` exceeds
+    # this many milliseconds. v0.2.1 had this as a module-level
+    # constant; v0.3 moves it to room config so per-policy tuning is
+    # possible without kernel edits.
+    policy_slow_threshold_ms: float = 100.0
+    # v0.3 PR 9 (doctrine §7): room-supplied custom control actions.
+    # Each must satisfy :class:`loom.kernel.control_actions.ControlAction`.
+    # Empty tuple (default) registers only the kernel built-ins.
+    custom_control_actions: tuple[Any, ...] = ()
+    # v0.3 PR 6 (doctrine §9): budget limits per scope. Empty dict =
+    # unlimited (the room-level scope returns ``+inf`` from
+    # ``BudgetLedger.remaining``).
+    budget_limits: dict[Any, float] = field(default_factory=dict)
+    # v0.3.x PR 4 (doctrine §3.1 / §10): identity used as the
+    # ``room_id`` component of :class:`loom.kernel.context.ContextScope`
+    # when the coordinator constructs the room-wide compaction scope.
+    # Default ``"main"`` lets single-room consumers ignore the field.
+    room_id: str = "main"
+    # v0.3.x PR 4 (doctrine §10 / study/14 §3.3): policy-pressure
+    # threshold for Path A auto-summarisation. When
+    # ``ContextPressure.pressure_ratio`` exceeds this ratio, the
+    # coordinator's policy hook may schedule a summarisation lease.
+    context_pressure_threshold_ratio: float = 0.7
+    # v0.3.x PR 4 (doctrine §10): minimum number of new chat events
+    # between pressure-estimation invocations. Keeps the estimator's
+    # cache busts predictable on long sessions.
+    context_pressure_check_interval_events: int = 10
+    # v0.3.x PR 4 (doctrine §7 / §11): per-scope consecutive-failure
+    # backoff threshold. After this many consecutive structural
+    # failures (excluding ``ANCHOR_CONFLICT``) the coordinator emits
+    # ``compaction_disabled`` for the scope. PR 5 wires the
+    # enforcement; PR 4 records the knob.
+    summarizer_max_consecutive_failures: int = 3
 
 
 @dataclass

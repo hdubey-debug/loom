@@ -274,6 +274,15 @@ class MessageBus:
                     f"max_body_bytes={self._max_body_bytes}; truncate "
                     "at the proxy boundary or raise the bus cap"
                 )
+        # v0.3.x PR 1 (doctrine P21): every event carries a non-empty
+        # thread_id. The Event dataclass defaults this to ``"main"``;
+        # this assertion catches any future caller that explicitly sets
+        # ``thread_id=None`` or to an empty string.
+        if not isinstance(ev.thread_id, str) or not ev.thread_id:
+            raise ValueError(
+                f"event thread_id must be a non-empty string, got "
+                f"{ev.thread_id!r}"
+            )
         with self._cond:
             if self._stopped:
                 return -1

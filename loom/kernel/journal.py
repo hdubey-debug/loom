@@ -27,13 +27,23 @@ Snapshot version history:
 - v2: drops ``mode``/``debate``. Adds nothing new.
 - v3: adds ``turn_taking_mode``, ``turn_order``, ``next_speaker_idx``.
 - v4: drops ``active_goal`` from control state.
-- v5 (current): drops ``turn_taking_mode``; round-robin is now signalled
+- v5: drops ``turn_taking_mode``; round-robin is now signalled
   by ``turn_order`` being non-empty. v4 / v3 snapshots that carry a
   ``turn_taking_mode`` value are read but the field is discarded — if
   the snapshot was in ``round_robin`` the corresponding ``turn_order``
   is what restores the rotation. v3 snapshots that carry
   ``active_goal`` are honored as a fallback for ``RoomState.topic``
   (P2.3 topic-merge restore shim).
+- v6 (current; v0.3 PR 1, doctrine P5 / §1): adopts the
+  :class:`loom.kernel.state.KernelState` transactional root. The
+  former v5 top-level RoomState fields are nested under a ``"room"``
+  key; sibling slots are reserved for v0.3 subsystem states
+  (``"capabilities"`` PR 5, ``"budget"`` PR 6, ``"actors"`` PR 13)
+  and post-v0.3 subsystems (``"workflow"``, ``"tools"``). PR 1 always
+  writes these sibling slots as ``null``; later PRs serialize the
+  populated sub-states. v5 snapshots are still loadable: the migrator
+  :func:`_migrate_v5_to_v6` reshapes a v5 dict into v6 in-memory
+  before :func:`restore_kernel_state` consumes it.
 
 Old ``events.jsonl`` lines with retired control types
 (``mode_changed`` / ``debate_turn`` / ``forfeit`` / ``debate_end``)
@@ -68,9 +78,16 @@ from loom.kernel.room import (
     RoomState,
     StyleLevel,
 )
+from loom.kernel.context import (
+    ContextState,
+    context_state_from_jsonable,
+    context_state_to_jsonable,
+    new_context_state,
+)
+from loom.kernel.state import KERNEL_STATE_SCHEMA_VERSION, KernelState, new_kernel_state
 
 
-SNAPSHOT_VERSION = 5
+SNAPSHOT_VERSION = KERNEL_STATE_SCHEMA_VERSION  # v0.3.x PR 2: 6 → 7.
 
 # v1 snapshots are still readable; the restore loop ignores keys
 # (``mode``, ``debate``) that no longer exist on RoomState. v2 snapshots
@@ -79,8 +96,11 @@ SNAPSHOT_VERSION = 5
 # ``turn_taking_mode`` field; restore_state discards it (round-robin
 # is signalled by a non-empty ``turn_order``). v3 snapshots may carry
 # ``control.active_goal``; the topic-merge restore shim folds it into
-# ``state.topic`` when topic is unset.
-_SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5})
+# ``state.topic`` when topic is unset. v5 snapshots are migrated to v6
+# in-memory by :func:`_migrate_v5_to_v6` before :func:`restore_kernel_state`
+# reads them. v6 snapshots lack the ``"context"`` slot; v0.3.x PR 2
+# (:func:`_migrate_v6_to_v7`) fills it with an empty :class:`ContextState`.
+_SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5, 6, 7})
 
 
 class Journal:
@@ -391,8 +411,14 @@ class Journal:
     # State snapshot
     # ------------------------------------------------------------------
 
-    def snapshot(self, state: RoomState) -> None:
+    def snapshot(self, state: "RoomState | KernelState") -> None:
         """Synchronously write ``room_state.json`` from ``state``.
+
+        v0.3 PR 1: accepts either :class:`RoomState` (back-compat for
+        existing call sites) or :class:`KernelState` (the v0.3
+        canonical root). RoomState inputs are wrapped via
+        :func:`loom.kernel.state.new_kernel_state` so the on-disk shape
+        is always v6.
 
         Used at clean shutdown where the caller wants the snapshot to be
         durable before the function returns. Periodic mid-session
@@ -472,9 +498,14 @@ class Journal:
                 pass
 
     @staticmethod
-    def _state_to_dict(state: RoomState) -> dict:
+    def _room_state_to_dict(state: RoomState) -> dict:
+        """Render the v5-shape room sub-dict (no envelope key).
+
+        Split out from :meth:`_state_to_dict` so v0.3 PR 1's v6 envelope
+        can nest the unchanged v5 fields under a ``"room"`` key without
+        re-spelling them.
+        """
         return {
-            "version": SNAPSHOT_VERSION,
             "room_epoch": state.room_epoch,
             "topic": state.topic,
             "anchor_id": state.anchor_id,
@@ -503,6 +534,39 @@ class Journal:
                 "turn_order": list(state.control.turn_order),
                 "next_speaker_idx": state.control.next_speaker_idx,
             },
+        }
+
+    @classmethod
+    def _state_to_dict(cls, state: "RoomState | KernelState") -> dict:
+        """Render a v7 snapshot dict from KernelState (or wrap a RoomState).
+
+        v0.3 PR 1 envelope shape (bumped to v7 by v0.3.x PR 2):
+
+        - ``"version"``: 7
+        - ``"room"``: v5-shape room sub-dict (from
+          :meth:`_room_state_to_dict`)
+        - ``"context"``: v0.3.x PR 2 — JSON-able compaction state
+          (:func:`loom.kernel.context.context_state_to_jsonable`).
+        - ``"capabilities"``, ``"budget"``, ``"actors"``,
+          ``"workflow"``, ``"tools"``: reserved sibling slots, always
+          ``null`` in PR 1; populated by their owning PRs.
+        - ``"kernel_version"``: monotonic transactional counter
+          (:attr:`KernelState.version`).
+        """
+        if isinstance(state, KernelState):
+            kernel = state
+        else:
+            kernel = new_kernel_state(state)
+        return {
+            "version": SNAPSHOT_VERSION,
+            "room": cls._room_state_to_dict(kernel.room),
+            "context": context_state_to_jsonable(kernel.context),
+            "capabilities": None,
+            "budget": None,
+            "actors": None,
+            "workflow": None,
+            "tools": None,
+            "kernel_version": kernel.version,
         }
 
     # ------------------------------------------------------------------
@@ -656,17 +720,92 @@ def _coerce_str_or_none(v: Any) -> Optional[str]:
     return None
 
 
+def _migrate_v5_to_v6(state_data: dict) -> dict:
+    """Reshape a v5 (or earlier) snapshot dict into the v6 envelope shape.
+
+    v6 nests the v5 top-level RoomState fields under a ``"room"`` key
+    and adds reserved sibling slots for v0.3 subsystem states (all
+    ``null`` in PR 1). Idempotent: a dict already in v6 shape (has a
+    ``"room"`` key with a dict value) is returned as-is.
+
+    The migration is in-memory only — :class:`Journal` does not rewrite
+    older ``room_state.json`` files on disk. The next clean snapshot
+    write replaces the on-disk file with v6 shape (and the v6→v7
+    migration is applied immediately afterwards by
+    :func:`_migrate_v6_to_v7`).
+    """
+    if isinstance(state_data.get("room"), dict):
+        # Already v6-shaped (or later); the v6→v7 migration handles
+        # the next step.
+        return state_data
+    # Strip the version key from the inner dict to avoid confusion;
+    # everything else (room_epoch, topic, control, participants, etc.)
+    # is what becomes the room sub-dict.
+    inner = {k: v for k, v in state_data.items() if k != "version"}
+    return {
+        "version": 6,
+        "room": inner,
+        "capabilities": None,
+        "budget": None,
+        "actors": None,
+        "workflow": None,
+        "tools": None,
+        "kernel_version": 0,
+    }
+
+
+def _migrate_v6_to_v7(state_data: dict) -> dict:
+    """Add the v0.3.x PR 2 ``"context"`` slot to a v6 snapshot dict.
+
+    v7 nests the empty-default :class:`ContextState` serialisation
+    under ``"context"`` and bumps ``"version"`` to 7. Idempotent — a
+    dict already at v7 (``version >= 7`` or a ``"context"`` key
+    present) is returned as-is.
+
+    The migration is in-memory only — :class:`Journal` does not
+    rewrite older ``room_state.json`` files on disk. The next clean
+    snapshot write replaces the file with v7 shape.
+    """
+    if not isinstance(state_data, dict):
+        return state_data
+    if state_data.get("version", 0) >= 7 and "context" in state_data:
+        return state_data
+    out = dict(state_data)
+    out["version"] = 7
+    out["context"] = context_state_to_jsonable(new_context_state())
+    return out
+
+
+def _room_sub_dict(state_data: Optional[dict]) -> Optional[dict]:
+    """Return the v5-shape room sub-dict from any supported snapshot.
+
+    For v6 snapshots, this is ``state_data["room"]`` (the nested
+    dict). For v1–v5 snapshots, it is ``state_data`` itself (the v5
+    fields live at the top level). Returns ``None`` when no usable
+    payload is present.
+    """
+    if not state_data or not isinstance(state_data, dict):
+        return None
+    version = state_data.get("version")
+    if isinstance(version, int) and version >= 6:
+        sub = state_data.get("room")
+        return sub if isinstance(sub, dict) else None
+    return state_data
+
+
 def restore_state(
     state_data: Optional[dict],
     config: RoomConfig,
 ) -> RoomState:
     """Rebuild a :class:`RoomState` from a snapshot dict.
 
-    Both v1 (legacy) and v2 snapshots are accepted. Any unrecognised
-    keys (``mode``, ``debate`` from v1) are silently ignored — they
-    don't exist on the v0 RoomState. If ``state_data`` is ``None``
-    (missing/corrupt snapshot), returns a fresh empty state with the
-    given config — caller should then replay events to repopulate.
+    Accepts v1 (legacy) through v6. v6 snapshots have the v5-shape
+    fields nested under ``state_data["room"]``; older versions have them
+    at the top level. Any unrecognised keys (``mode``, ``debate`` from
+    v1) are silently ignored — they don't exist on the v0 RoomState. If
+    ``state_data`` is ``None`` (missing/corrupt snapshot), returns a
+    fresh empty state with the given config — caller should then replay
+    events to repopulate.
 
     P0.3: every scalar field is type-checked via :func:`_coerce_int` /
     :func:`_coerce_str_or_none` and bad participant entries are skipped
@@ -676,8 +815,10 @@ def restore_state(
     arithmetic.
     """
     state = RoomState(config=config)
-    if not state_data or not isinstance(state_data, dict):
+    sub = _room_sub_dict(state_data)
+    if sub is None:
         return state
+    state_data = sub
 
     state.room_epoch = _coerce_int(state_data.get("room_epoch", 0), 0)
     state.topic = _coerce_str_or_none(state_data.get("topic"))
@@ -765,3 +906,44 @@ def restore_state(
             state.topic = str(legacy_goal)
 
     return state
+
+
+def restore_kernel_state(
+    state_data: Optional[dict],
+    config: RoomConfig,
+) -> KernelState:
+    """Rebuild a v0.3 :class:`KernelState` from a snapshot dict.
+
+    The v6 envelope nests the v5-shape room fields under ``"room"`` and
+    carries reserved sibling slots for v0.3 subsystem states. PR 1 reads
+    the ``"room"`` sub-dict via :func:`restore_state` and the
+    ``"kernel_version"`` counter; the subsystem slots are intentionally
+    not consumed yet — their owning PRs (5, 6, 13) wire that in.
+
+    Accepts older v1–v5 snapshots transparently — they are migrated
+    in-memory by :func:`_migrate_v5_to_v6` before consumption (the
+    on-disk file is not rewritten; the next clean :meth:`Journal.snapshot`
+    replaces it with v6 shape). ``None`` / corrupt input returns a fresh
+    empty :class:`KernelState` with the given config.
+    """
+    room = restore_state(state_data, config)
+    kernel = new_kernel_state(room)
+    if isinstance(state_data, dict):
+        ver = state_data.get("version")
+        if isinstance(ver, int) and ver >= 6:
+            # v6 envelope carries an explicit kernel_version counter.
+            kv = _coerce_int(state_data.get("kernel_version", 0), 0)
+            if kv < 0:
+                kv = 0
+            kernel.version = kv
+        # else: v1–v5 had no kernel_version; leave at default 0.
+        # v0.3.x PR 2: v7 envelopes carry a ``"context"`` slot;
+        # older envelopes are migrated to v7 in-memory by
+        # :func:`_migrate_v6_to_v7` (applied at the load boundary)
+        # before this restore runs, so the slot is always present
+        # by the time we read it.
+        if isinstance(ver, int) and ver >= 7:
+            kernel.context = context_state_from_jsonable(
+                state_data.get("context")
+            )
+    return kernel

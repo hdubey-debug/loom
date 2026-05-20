@@ -112,7 +112,7 @@ def test_pending_direct_mention_replay(bus_and_coord):
 
     # When _decide_once runs, the pending event should be replayed and
     # decide() should select it as the trigger.
-    decision = actor._decide_once()
+    _snap, decision = actor._decide_once()
     assert decision.trigger_event_id == eid
 
 
@@ -138,7 +138,7 @@ def test_pending_direct_mention_already_in_snap_skipped(bus_and_coord):
     eid = _open_turn_with_alice_addressed(bus, coord)
     actor._pending_direct_mentions.append(eid)
 
-    decision = actor._decide_once()
+    _snap, decision = actor._decide_once()
     assert decision.trigger_event_id == eid
 
 
@@ -153,7 +153,7 @@ def test_update_pending_mentions_adds_new_user_mentions(bus_and_coord):
     e2 = ev.chat(sender="user", body="@alice second", addressees=["alice"])
     id2 = bus.post(e2)
 
-    decision = actor._decide_once()
+    _snap, decision = actor._decide_once()
     # Whichever event was the trigger, the OTHER user mention should be in
     # the pending LRU.
     other = id2 if decision.trigger_event_id == id1 else id1

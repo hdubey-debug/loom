@@ -59,6 +59,60 @@ from loom.kernel.room import (
     RoomState,
     StyleLevel,
 )
+from loom.kernel.actor_state import register_cursor_advanced_reducer
+from loom.kernel.budgets import BudgetLedger, register_budget_reducers
+from loom.kernel.capabilities import (
+    CapabilityName,
+    CapabilityState,
+    register_capability_reducers,
+)
+from loom.kernel.control_actions import (
+    ControlActionRegistry,
+    ControlActionResult,
+    DenialReason,
+    build_kernel_action_registry,
+)
+from loom.kernel.floor_overrides import (
+    FLOOR_OVERRIDE_ACTIONS,
+    prune_overrides_for_lease,
+    prune_overrides_for_turn,
+    register_floor_override_reducer,
+)
+from loom.kernel.causality import TraceContext, child_span, new_trace
+from loom.kernel.leases import (
+    ALL_LEASE_KINDS,
+    ControlActionContext,
+    Lease,
+    LeaseContext,
+    LeaseKind,
+    ReactiveContext,
+    SummarizationContext,
+    UserTurnContext,
+    check_applies_to,
+)
+from loom.kernel.state import KernelState, new_kernel_state
+from loom.kernel.context import (
+    ContextScope,
+    SummaryFailureReason,
+    SummaryRecord,
+    validate_summary_record,
+)
+from loom.kernel.effects import (
+    AnchorAssignedEffect,
+    ChairAssignedEffect,
+    CompactionDisabledEffect,
+    ControlEffect,
+    DefaultResponderSetEffect,
+    DefaultSummarizerSetEffect,
+    EffectRegistry,
+    RolesAssignedEffect,
+    StyleChangedEffect,
+    SummaryCommittedEffect,
+    SummaryFailedEffect,
+    SummaryProposedEffect,
+    TopicChangedEffect,
+    build_kernel_registry,
+)
 from loom.kernel.obligations import plan_for_default
 from loom.kernel.user_turn import (
     ClosureReason,
@@ -73,6 +127,12 @@ from loom.kernel.user_turn import (
 # policy's ``plan_user_turn`` exceeds this many milliseconds. The
 # coordinator holds its lock across the call, so a slow policy blocks
 # every actor thread.
+#
+# v0.3 PR 13 (closes audit D3): the per-policy slow threshold now
+# lives at :attr:`loom.kernel.room.RoomConfig.policy_slow_threshold_ms`.
+# The module-level constant remains as the back-compat default
+# (`getattr(config, "policy_slow_threshold_ms", _POLICY_SLOW_THRESHOLD_MS)`)
+# so pre-v0.3 RoomConfig pickles continue to drive the same behavior.
 _POLICY_SLOW_THRESHOLD_MS = 100.0
 
 
@@ -89,6 +149,57 @@ PolicyErrorMode = str  # Literal["close_turn", "default_responder", "raise"]
 - ``"raise"``: emit ``policy_error`` then re-raise the exception.
   Useful in dev mode to surface stack traces; do not use in prod.
 """
+
+
+# ---------------------------------------------------------------------------
+# Lock discipline (v0.3 PR 2 / doctrine P4 / §2)
+# ---------------------------------------------------------------------------
+
+
+class _TrackedRLock:
+    """:class:`threading.RLock` wrapper that records the owning thread.
+
+    The stdlib RLock exposes no portable way to ask "does the current
+    thread hold this lock?" — the pure-Python ``_RLock._owner`` slot is
+    an implementation detail. This wrapper records the owner alongside
+    a depth counter so :meth:`RoomCoordinator._assert_not_holding_lock`
+    can fail loudly when an I/O entry point is invoked under-lock.
+
+    Drop-in for ``threading.RLock``: supports ``__enter__`` / ``__exit__``
+    (the dominant call site is ``with coord._lock: ...``) plus the
+    legacy ``acquire`` / ``release`` methods. Reentrant: nested
+    acquires from the same thread succeed without bumping the owner.
+    """
+
+    __slots__ = ("_lock", "_owner_ident", "_depth")
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._owner_ident: Optional[int] = None
+        self._depth = 0
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        ok = self._lock.acquire(blocking, timeout)
+        if ok:
+            self._owner_ident = threading.get_ident()
+            self._depth += 1
+        return ok
+
+    def release(self) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner_ident = None
+        self._lock.release()
+
+    def __enter__(self) -> "_TrackedRLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.release()
+
+    def is_held_by_current_thread(self) -> bool:
+        return self._depth > 0 and self._owner_ident == threading.get_ident()
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +225,50 @@ class TurnLease:
     acquired_at: float  # time.monotonic
     expires_at: float  # time.monotonic
     valid: bool = True
+
+
+# ---------------------------------------------------------------------------
+# v0.3.x PR 3 — SummaryCommitResult
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SchedulingResult:
+    """Outcome of :meth:`RoomCoordinator.schedule_summarization` (Path A).
+
+    ``scheduled`` is True iff a SUMMARIZATION lease was acquired and
+    a ``summarization_scheduled`` audit event was emitted. On failure,
+    ``denial_reason`` carries a short structured string (e.g.
+    ``"no_default_summarizer"``, ``"scope_disabled"``,
+    ``"lease_denied:not_default_summarizer"``).
+    """
+
+    scheduled: bool
+    lease_id: Optional[int]
+    summarizer_id: Optional[str]
+    scope: Optional[ContextScope]
+    denial_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SummaryCommitResult:
+    """Outcome of :meth:`RoomCoordinator.submit_summary_proposed`.
+
+    ``committed`` is the headline boolean; on success ``reason`` is
+    ``None`` and ``committed_at_event_id`` is the bus id of the
+    ``summary_committed`` event. On failure ``reason`` carries the
+    structural :class:`SummaryFailureReason`, ``details`` carries the
+    validator's short diagnostic string, and ``failed_validator`` is
+    ``"structural"`` (off-lock pre-validator) or ``"anchor"`` (under-
+    lock anchor check).
+    """
+
+    committed: bool
+    summary_id: str
+    reason: Optional[SummaryFailureReason]
+    details: Optional[str]
+    failed_validator: Optional[str]
+    committed_at_event_id: Optional[int]
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +389,10 @@ class BudgetConfig:
 
 class _OpenTurnCheck:
     name = "open_turn"
+    # v0.3 PR 7 / doctrine §3: applies only to USER_TURN leases — control
+    # action / reactive / tool leases don't gate on the user turn being
+    # open.
+    applies_to = frozenset({LeaseKind.USER_TURN})
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -247,6 +406,9 @@ class _OpenTurnCheck:
 
 class _ParticipantRegisteredCheck:
     name = "participant_registered"
+    # Applies to every lease kind — even REACTIVE / CONTROL_ACTION
+    # holders must be known participants.
+    applies_to = ALL_LEASE_KINDS
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -259,6 +421,7 @@ class _ParticipantRegisteredCheck:
 
 class _ParticipantActiveCheck:
     name = "participant_active"
+    applies_to = ALL_LEASE_KINDS
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -272,6 +435,7 @@ class _ParticipantActiveCheck:
 
 class _AllowedSpeakerCheck:
     name = "allowed_speaker"
+    applies_to = frozenset({LeaseKind.USER_TURN})
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -295,6 +459,7 @@ class _AllowedSpeakerCheck:
 
 class _PerParticipantCapCheck:
     name = "per_participant_cap"
+    applies_to = frozenset({LeaseKind.USER_TURN})
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -311,6 +476,7 @@ class _PerParticipantCapCheck:
 
 class _MaxResponsesCheck:
     name = "max_responses"
+    applies_to = frozenset({LeaseKind.USER_TURN})
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -335,6 +501,10 @@ class _MaxResponsesCheck:
 
 class _ThrottleCheck:
     name = "throttle"
+    # USER_TURN only — control actions and reactive leases are not
+    # subject to the chat-rate throttle bucket (each kind would
+    # justify its own bucket if needed; that's a v0.4+ refinement).
+    applies_to = frozenset({LeaseKind.USER_TURN})
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -350,6 +520,11 @@ class _ThrottleCheck:
 
 class _BudgetCheck:
     name = "budget"
+    # v0.3 PR 7: budget cap applies to USER_TURN today. PR 12 will
+    # extend to every lease kind that pays for an external dependency
+    # (tool calls, workflow steps). For now control_action / reactive
+    # leases are exempt because their cost model is undefined.
+    applies_to = frozenset({LeaseKind.USER_TURN})
 
     def check(
         self, *, holder, trigger_event_id, is_direct_mention, coordinator
@@ -358,6 +533,99 @@ class _BudgetCheck:
         ut = coordinator._user_turn
         if not coordinator._budget.can_acquire(ut.id):
             return LeaseCheckResult(False, "budget_exceeded")
+        return PASSED
+
+
+class _CapabilityCheck:
+    """v0.3 PR 7 / doctrine §3 — capability gate for CONTROL_ACTION leases.
+
+    Inspects the lease context to identify the action being proposed
+    and confirms the holder has the required capability via
+    :class:`CapabilityState.has`. PR 9 wires the
+    ``required_capability`` mapping from each ``ControlAction``; for
+    PR 7 the check is wired into the default check tuple so the
+    structural shape is in place — without PR 9's action registry
+    every CONTROL_ACTION proposal is denied as
+    ``"insufficient_capability"`` until the corresponding capability
+    is granted.
+
+    The user (holder == ``"user"``) bypasses the check per P15 —
+    human root actions enter via the slash-command path (PR 11) and
+    are not subject to the agent capability gate.
+    """
+
+    name = "capability"
+    # v0.3.x PR 5: SUMMARIZATION leases also gate on a required
+    # capability (read off SummarizationContext.required_capability).
+    applies_to = frozenset({LeaseKind.CONTROL_ACTION, LeaseKind.SUMMARIZATION})
+
+    def check(
+        self, *, holder, trigger_event_id, is_direct_mention, coordinator
+    ) -> LeaseCheckResult:
+        del trigger_event_id, is_direct_mention
+        if holder == "user":
+            return PASSED
+        ctx = getattr(coordinator, "_pending_lease_context", None)
+        from loom.kernel.leases import SummarizationContext
+        if not isinstance(ctx, (ControlActionContext, SummarizationContext)):
+            # Defensive: PR 7 always sets the context before invoking
+            # the check chain for a typed lease. Missing context means
+            # the caller used the v0.2 untyped path (USER_TURN) — this
+            # check doesn't apply.
+            return PASSED
+        # v0.3 PR 9: the context carries the action's
+        # ``required_capability`` directly. Fall back to a name→enum
+        # match (legacy bare-context tests) when absent.
+        cap_value = ctx.required_capability
+        if cap_value is None:
+            cap_value = ctx.action_name
+        try:
+            cap = CapabilityName(cap_value)
+        except ValueError:
+            return LeaseCheckResult(False, "unknown_control_action")
+        caps = coordinator.kernel_state.capabilities
+        if caps is None or not caps.has(holder, cap):
+            return LeaseCheckResult(False, "insufficient_capability")
+        return PASSED
+
+
+class _SummarizerSlotCheck:
+    """v0.3.x PR 5 / doctrine P22 — Path A slot enforcement.
+
+    Verifies that a SUMMARIZATION lease's holder matches the room's
+    :attr:`RoomState.default_summarizer_id`. Path A (policy-triggered)
+    auto-summarisation must run as the slot occupant; Path B (control
+    action) is gated separately via the SUMMARIZE capability and is
+    NOT subject to the slot check (a granted SUMMARIZE capability can
+    arrive at a non-summariser participant, as in
+    ``/summarize <alt-agent>``).
+
+    The ``triggered_by`` field on
+    :class:`SummarizationContext` discriminates: ``"policy"`` enforces
+    the slot match; ``"control_action"`` skips it (the capability
+    check is the gate).
+    """
+
+    name = "summarizer_slot"
+    applies_to = frozenset({LeaseKind.SUMMARIZATION})
+
+    def check(
+        self, *, holder, trigger_event_id, is_direct_mention, coordinator
+    ) -> LeaseCheckResult:
+        del trigger_event_id, is_direct_mention
+        ctx = getattr(coordinator, "_pending_lease_context", None)
+        from loom.kernel.leases import SummarizationContext
+        if not isinstance(ctx, SummarizationContext):
+            return PASSED
+        if ctx.triggered_by != "policy":
+            # Path B (control_action) — capability check is the gate;
+            # holder need not be the slot occupant.
+            return PASSED
+        slot = coordinator.state.default_summarizer_id
+        if slot is None:
+            return LeaseCheckResult(False, "no_default_summarizer")
+        if holder != slot:
+            return LeaseCheckResult(False, "not_default_summarizer")
         return PASSED
 
 
@@ -370,6 +638,13 @@ DEFAULT_LEASE_CHECKS: tuple[LeaseCheck, ...] = (
     _MaxResponsesCheck(),
     _ThrottleCheck(),
     _BudgetCheck(),
+    # v0.3 PR 7: only fires for CONTROL_ACTION (+ v0.3.x PR 5
+    # SUMMARIZATION) leases (filtered via ``check_applies_to``);
+    # USER_TURN flows are unaffected because the check's
+    # ``applies_to`` set excludes USER_TURN.
+    _CapabilityCheck(),
+    # v0.3.x PR 5: SUMMARIZATION-only slot enforcement for Path A.
+    _SummarizerSlotCheck(),
 )
 
 
@@ -390,15 +665,86 @@ class RoomCoordinator:
     def __init__(
         self,
         bus: MessageBus,
-        state: RoomState,
+        state: "RoomState | KernelState",
         *,
         policy_error_mode: PolicyErrorMode = "close_turn",
         policy: Optional["ConversationPolicy"] = None,
     ) -> None:
         self.bus = bus
-        self.state = state
-        self.config: RoomConfig = state.config
-        self._lock = threading.RLock()
+        # v0.3 P5 / §1: KernelState is now the canonical mutable root.
+        # For back-compat the constructor still accepts a bare RoomState
+        # (every test + library call site in v0.2 passes one); we wrap
+        # it. ``self.state`` continues to expose the RoomState so v0.2
+        # call sites (coordinator-internal, runtime, tests) keep working
+        # — it is now an alias for ``self._kernel.room``. v0.3
+        # subsystem PRs (5, 6, 13) access their state via
+        # ``self._kernel.capabilities`` / ``.budget`` / ``.actors``.
+        if isinstance(state, KernelState):
+            self._kernel: KernelState = state
+        else:
+            self._kernel = new_kernel_state(state)
+        self.state = self._kernel.room
+        self.config: RoomConfig = self.state.config
+        # v0.3 PR 2 / doctrine P4: _TrackedRLock records the owning
+        # thread so I/O entry points can assert no lock is held before
+        # they begin a potentially-blocking call. Stdlib RLock has no
+        # portable owner check.
+        self._lock = _TrackedRLock()
+
+        # v0.3 PR 3 / doctrine P6, P7, §5: typed effect registry. Slot
+        # mutations route through ``_apply_effect`` so future PRs can
+        # add reducers (capability — PR 5, budget — PR 6, lease taxonomy
+        # — PR 8, floor overrides — PR 10, cursor — PR 13) by extending
+        # this same registry instance.
+        self._effect_registry: EffectRegistry = build_kernel_registry()
+        # v0.3 PR 5 (doctrine §6, P1, P10): the capability ledger lives
+        # on ``KernelState.capabilities``; the three reducers register
+        # themselves onto the coordinator's registry instance at
+        # room construction so ``_apply_effect`` can dispatch a
+        # ``CapabilityGrantedEffect`` / ``Revoked`` / ``Expired``
+        # without further wiring.
+        if self._kernel.capabilities is None:
+            self._kernel.capabilities = CapabilityState()
+        register_capability_reducers(self._effect_registry)
+        # v0.3 PR 6 (doctrine §9, P9): the budget ledger lives on
+        # ``KernelState.budget``; the three reducers (reserve / commit
+        # / refund) register themselves alongside the capability ones.
+        # PR 7 (lease unification) wires reservation into the
+        # ``acquire_lease`` path; PR 8 wires commit/refund into the
+        # unified ``release_lease(reason=...)`` taxonomy. PR 6 ships
+        # the ledger so the registry slot exists and unit tests can
+        # drive end-to-end accounting flows.
+        if self._kernel.budget is None:
+            self._kernel.budget = BudgetLedger()
+        register_budget_reducers(self._effect_registry)
+
+        # v0.3 PR 9 (doctrine §7, P14): control-action dispatch
+        # registry. Hydrated with the kernel built-ins + PR 10's floor
+        # override actions + any ``RoomConfig.custom_control_actions``
+        # (v0.3 reserves the config field; pre-v0.3 RoomConfig
+        # instances pass an empty tuple via ``getattr``).
+        customs = tuple(getattr(self.config, "custom_control_actions", ()) or ())
+        self._action_registry: ControlActionRegistry = (
+            build_kernel_action_registry(FLOOR_OVERRIDE_ACTIONS + customs)
+        )
+        # v0.3 PR 10 (doctrine §10): wire the FloorOverrideEffect
+        # reducer onto the same registry the slot setters use.
+        register_floor_override_reducer(self._effect_registry)
+        # v0.3 PR 13 (closes audit A3): wire the CursorAdvancedEffect
+        # reducer so actor cursor state can persist via the journal.
+        # The actor side opt-in is a v0.3.x follow-up; PR 13 ships
+        # the data shape + reducer so the registry slot exists.
+        register_cursor_advanced_reducer(self._effect_registry)
+
+        # v0.3 PR 4 / doctrine P12: trace context. ``_trace_root`` is
+        # the room-session-scoped trace (allocated at coordinator
+        # construction; outlives every lease). Lease acquisition opens
+        # a child span via :func:`child_span`; events posted under a
+        # held lease inherit the lease's span. PR 4 ships the root +
+        # the helper; lease-scoped span tracking joins in PR 7's lease
+        # unification (which is where ``Lease`` gains a ``trace_span_id``
+        # field).
+        self._trace_root: TraceContext = new_trace()
 
         if policy_error_mode not in ("close_turn", "default_responder", "raise"):
             raise ValueError(f"unknown policy_error_mode: {policy_error_mode!r}")
@@ -413,6 +759,22 @@ class RoomCoordinator:
         self._policy: Optional["ConversationPolicy"] = policy
 
         self._leases: dict[int, TurnLease] = {}
+        # v0.3 PR 7 / doctrine §3: typed-lease registry. USER_TURN
+        # leases continue to live in ``_leases`` (so v0.2 call sites
+        # stay byte-identical); CONTROL_ACTION / REACTIVE / future
+        # tool / workflow leases live here. PR 8 collapses the two
+        # maps into one under the unified ``Lease`` type.
+        self._typed_leases: dict[int, Lease] = {}
+        # v0.3 PR 12 / closes audit D2: streaming-stall watchdog
+        # state. ``_last_chunk_at[lease_id]`` holds the monotonic
+        # timestamp of the most recent stream delta for that lease;
+        # ``check_streaming_stall`` reaps leases whose latest chunk
+        # exceeds ``RoomConfig.stream_stall_threshold_s``.
+        self._last_chunk_at: dict[int, float] = {}
+        # ``_CapabilityCheck`` (PR 7) reads this slot to identify the
+        # action being proposed. Set by ``acquire_typed_lease`` before
+        # the check chain runs; cleared after.
+        self._pending_lease_context: Optional[LeaseContext] = None
         self._next_lease_id = 0
 
         self._user_turn: Optional[UserTurn] = None
@@ -451,6 +813,748 @@ class RoomCoordinator:
     def budget(self) -> BudgetConfig:
         return self._budget
 
+    @property
+    def trace_root(self) -> TraceContext:
+        """v0.3 PR 4 / doctrine P12 — room-session root :class:`TraceContext`.
+
+        Allocated once at coordinator construction; outlives every
+        lease. PR 7 (lease unification) will store a child span on the
+        :class:`Lease` dataclass; v0.3 PRs after that stamp the
+        lease's span on every event posted while the lease is held.
+        """
+        return self._trace_root
+
+    def new_child_span(self) -> TraceContext:
+        """Return a fresh :class:`TraceContext` under :attr:`trace_root`.
+
+        Used by lease acquisition (PR 7) and any v0.4+ scope-opening
+        event that wants its own span. Safe to call without the lock;
+        :func:`child_span` is pure (no shared state mutation).
+        """
+        return child_span(self._trace_root)
+
+    @property
+    def kernel_state(self) -> KernelState:
+        """v0.3 P5 / §1 transactional root.
+
+        Exposed read-only at this layer — mutation paths bump
+        ``KernelState.version`` via :meth:`_bump_state_version` under
+        the coordinator lock. Tests + library code that need the
+        canonical v0.3 root use this property; legacy ``self.state``
+        continues to alias ``kernel_state.room`` for back-compat.
+        """
+        return self._kernel
+
+    def _bump_state_version(self) -> int:
+        """Increment ``KernelState.version`` under lock and return it.
+
+        Caller must hold ``self._lock``. PR 3's effect-registry dispatch
+        will be the dominant call site (every applied effect bumps);
+        PR 1 wires the helper into the existing in-place mutation
+        methods (membership / slots / control state) so the version
+        counter is meaningful immediately rather than at the v0.3
+        release-cut.
+        """
+        return self._kernel.bump_version()
+
+    def _apply_effect(self, effect: ControlEffect) -> ControlEffect:
+        """v0.3 PR 3 / doctrine P6, P7, §5 — apply a typed semantic effect.
+
+        Caller MUST hold ``self._lock``. Looks up the registered
+        reducer for ``(effect.effect_type, effect.schema_version)``,
+        runs it in place against :attr:`KernelState`, bumps the
+        :attr:`KernelState.version` counter, and returns the effect
+        for caller bookkeeping. The reducer is responsible for the
+        state delta only — bus emission, lease invalidation, and
+        watchdog wiring continue to live at the calling method so
+        legacy semantics are byte-identical post-refactor.
+
+        Raises :class:`loom.kernel.effects.UnknownEffect` if no
+        reducer is registered — a programmer error in v0.3 (every
+        coordinator-emitted effect must have its reducer registered at
+        room-construction time).
+        """
+        self._effect_registry.apply(self._kernel, effect)
+        self._bump_state_version()
+        return effect
+
+    def propose_control_action(
+        self,
+        proposer_id: str,
+        action_name: str,
+        params: Optional[dict] = None,
+    ) -> ControlActionResult:
+        """v0.3 PR 9 / doctrine §7 — full control-action lifecycle.
+
+        Steps:
+
+        1. Emit ``control_action_proposed`` (P2 control plane).
+        2. Resolve ``action_name`` via the registry; emit
+           ``control_action_denied(UNKNOWN_ACTION)`` if missing.
+        3. ``validate_params``; emit ``control_action_denied(INVALID_PARAMS)``
+           on failure.
+        4. Acquire ``LeaseKind.CONTROL_ACTION`` lease (PR 7) — the
+           ``_CapabilityCheck`` (PR 7) enforces P10 capability gating.
+           Denial emits ``control_action_denied(INSUFFICIENT_CAPABILITY)``.
+        5. On grant, run ``action.propose_effect`` against the frozen
+           ``KernelStateView``; apply each effect via
+           :meth:`_apply_effect`; release the lease; emit
+           ``control_action_applied`` with an effect summary.
+        6. Return a :class:`ControlActionResult` for the caller.
+
+        v0.3 PR 14 (custom actions return built-in effects only): the
+        registered reducer set on ``self._effect_registry`` rejects
+        unknown effect types — a custom action that returns a
+        non-built-in :class:`ControlEffect` triggers ``UnknownEffect``
+        from the registry, surfaced as ``CHECK_RAISED``.
+        """
+        params = dict(params or {})
+        # Step 1 — emit proposed event.
+        self.bus.post_internal(
+            ev.control_action_proposed(
+                action_name=action_name,
+                proposer_id=proposer_id,
+                params=params,
+            ),
+            auth=_KERNEL_AUTH,
+        )
+
+        action = self._action_registry.get(action_name)
+        if action is None:
+            return self._deny_control_action(
+                action_name, proposer_id,
+                DenialReason.UNKNOWN_ACTION,
+                f"unknown action: {action_name!r}",
+            )
+
+        ok, why = action.validate_params(params)
+        if not ok:
+            return self._deny_control_action(
+                action_name, proposer_id,
+                DenialReason.INVALID_PARAMS,
+                why or "invalid params",
+            )
+
+        # Step 4 — lease + capability check.
+        ctx = ControlActionContext(
+            action_name=action_name,
+            params=(),
+            required_capability=action.required_capability.value,
+        )
+        lease = self.acquire_typed_lease(
+            LeaseKind.CONTROL_ACTION, proposer_id, ctx
+        )
+        if lease is None:
+            return self._deny_control_action(
+                action_name, proposer_id,
+                DenialReason.INSUFFICIENT_CAPABILITY,
+                "lease denied",
+                check_name="capability",
+            )
+
+        # Step 5 — apply effects under lock.
+        try:
+            view = self._kernel.view()
+            effects = action.propose_effect(params, view)
+        except Exception as exc:
+            self._release_typed_lease(lease.id)
+            return self._deny_control_action(
+                action_name, proposer_id,
+                DenialReason.CHECK_RAISED,
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        applied: list[ControlEffect] = []
+        try:
+            with self._lock:
+                for eff in effects:
+                    self._apply_effect(eff)
+                    applied.append(eff)
+        except Exception as exc:
+            self._release_typed_lease(lease.id)
+            return self._deny_control_action(
+                action_name, proposer_id,
+                DenialReason.CHECK_RAISED,
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        self._release_typed_lease(lease.id)
+
+        summary = [
+            {"effect_type": e.effect_type, "schema_version": e.schema_version}
+            for e in applied
+        ]
+        self.bus.post_internal(
+            ev.control_action_applied(
+                action_name=action_name,
+                applier_id=proposer_id,
+                effects=summary,
+            ),
+            auth=_KERNEL_AUTH,
+        )
+        return ControlActionResult(granted=True, effects=tuple(applied))
+
+    def _deny_control_action(
+        self,
+        action_name: str,
+        proposer_id: str,
+        reason: DenialReason,
+        message: str,
+        check_name: Optional[str] = None,
+    ) -> ControlActionResult:
+        self.bus.post_internal(
+            ev.control_action_denied(
+                action_name=action_name,
+                proposer_id=proposer_id,
+                reason=reason.value,
+                check_name=check_name,
+            ),
+            auth=_KERNEL_AUTH,
+        )
+        return ControlActionResult(
+            granted=False, reason=reason, message=message
+        )
+
+    def _release_typed_lease(self, lease_id: int) -> None:
+        """v0.3 PR 7+8 — release a typed lease and emit `lease_closed`."""
+        with self._lock:
+            lease = self._typed_leases.pop(lease_id, None)
+            if lease is None:
+                return
+            lease.valid = False
+        self.bus.post_internal(
+            ev.lease_closed(
+                lease_id=lease.id,
+                holder=lease.holder,
+                kind=lease.kind.value,
+                reason="released",
+                span_id=lease.trace_span_id,
+            ),
+            auth=_KERNEL_AUTH,
+        )
+
+    def _assert_not_holding_lock(self, where: str) -> None:
+        """v0.3 PR 2 / doctrine P4: refuse to enter an I/O path under lock.
+
+        Raises :class:`RuntimeError` if the current thread holds
+        ``self._lock``. Call from every entry point that may perform a
+        long-running operation: LLM invocations, tool calls, file I/O,
+        snapshot writes, sleeps. The doctrine prohibits these under the
+        coordinator lock because they would serialize the whole room on
+        a single external dependency.
+
+        ``where`` is a short symbolic identifier (e.g.
+        ``"streaming.run_streaming_call"``) included in the error so
+        the offending call site is grep-able in test failures.
+
+        Cost is one attribute compare; safe to call on hot paths.
+        """
+        if self._lock.is_held_by_current_thread():
+            raise RuntimeError(
+                "loom.kernel: lock-discipline violation — "
+                f"{where} called while holding the coordinator lock. "
+                "See docs/lock-discipline.md (doctrine P4)."
+            )
+
+    # ------------------------------------------------------------------
+    # v0.3.x PR 1 — thread_id emit helpers (doctrine P21)
+    # ------------------------------------------------------------------
+
+    def _emit_under_lease(self, lease: Lease, event: Event) -> int:
+        """Post ``event`` to the bus, inheriting ``thread_id`` from ``lease``.
+
+        Doctrine P21 — every event posted while a lease is held belongs
+        to the lease's thread. The lease's :class:`LeaseContext`
+        (each of the five v0.3 subclasses) carries a ``thread_id``
+        field; this helper copies it onto the event if the caller
+        hasn't already populated a non-default value.
+
+        Existing v0.3 emit sites that don't yet route through this
+        helper continue to work because ``Event.thread_id`` defaults
+        to ``"main"`` — which is the correct value for room-wide
+        events. Future compaction emitters (PR 3, PR 5) call this
+        helper so per-thread summaries inherit the lease's scope.
+        """
+        ctx_tid = getattr(lease.context, "thread_id", None)
+        if isinstance(ctx_tid, str) and ctx_tid:
+            if event.thread_id == "main":
+                event.thread_id = ctx_tid
+        return self.bus.post_internal(event, auth=_KERNEL_AUTH)
+
+    def _emit_system(self, event: Event, thread_id: str = "main") -> int:
+        """Post a kernel-originated ``event`` not bound to any lease.
+
+        Stamps ``thread_id`` (default ``"main"``) onto the event
+        before bus emission. Use for coordinator-internal control
+        events (lifecycle / dead-letter / membership) that aren't
+        scoped to a lease's thread. Most v0.3 internal emits are
+        room-wide and need no override; pass an explicit
+        ``thread_id`` only when posting into a non-main thread.
+        """
+        if event.thread_id == "main" and thread_id != "main":
+            event.thread_id = thread_id
+        return self.bus.post_internal(event, auth=_KERNEL_AUTH)
+
+    # ------------------------------------------------------------------
+    # v0.3.x PR 3 — view-layer compaction commit lifecycle
+    # (doctrine P18 / P19 / §6 / study/14)
+    # ------------------------------------------------------------------
+
+    def submit_summary_proposed(self, record: SummaryRecord) -> "SummaryCommitResult":
+        """Off-lock pre-validate, then under-lock commit a summary record.
+
+        Doctrine P19: structural validation runs *off-lock* (so the
+        coordinator lock isn't held across the validator), then the
+        commit step re-acquires the lock for an anchor-conflict check
+        and the registered ``summary_committed`` reducer.
+
+        Three terminal outcomes:
+
+        - **Pre-validator rejects** → emit ``summary_failed`` (reason =
+          structural class), apply :class:`SummaryFailedEffect`, return
+          ``SummaryCommitResult(committed=False, ...)``.
+        - **Under-lock anchor check rejects** (another summariser
+          advanced ``active_summary_by_scope`` for the same scope while
+          this proposal was being validated) → emit ``summary_proposed``
+          (so the journal shows the attempt), then
+          ``summary_failed(reason=ANCHOR_CONFLICT)``. ANCHOR_CONFLICT
+          does NOT increment ``failure_count`` (doctrine §7 — anchor
+          races are benign and don't count toward backoff).
+        - **Commit succeeds** → emit ``summary_proposed`` then
+          ``summary_committed``; apply the committed effect under-lock.
+
+        Callers (PR 5 will be both Path A and Path B) drive this from
+        an off-lock context; calling under-lock raises
+        :class:`RuntimeError` via :meth:`_assert_not_holding_lock`.
+        """
+        self._assert_not_holding_lock("coordinator.submit_summary_proposed")
+
+        # --- Off-lock pre-validation -------------------------------
+        # Snapshot bus length and current summaries for the validator
+        # input. The snapshot is consistent for the purpose of the
+        # structural check — any concurrent appends only ADD to bus
+        # length, which can never *narrow* a previously valid range.
+        bus_length = len(self.bus.snapshot())
+        # ContextState.summaries is mutated only under the coordinator
+        # lock by reducers; reading it off-lock is safe for the lookup
+        # because validate_lineage tolerates absent ids (the under-lock
+        # commit re-checks anchor state authoritatively).
+        summaries_view = dict(self.kernel_state.context.summaries)
+        ok, reason, detail = validate_summary_record(
+            record,
+            bus_length=bus_length,
+            input_summary_lookup=summaries_view,
+        )
+        if not ok:
+            assert reason is not None
+            return self._reject_summary(
+                record,
+                reason=reason,
+                detail=detail or "",
+                failed_validator="structural",
+                emit_proposed_first=False,
+            )
+
+        # --- Under-lock commit -------------------------------------
+        with self._lock:
+            # Anchor check: the record's input_summary_ids must include
+            # whatever is currently in active_summary_by_scope[scope]
+            # (or the slot must be empty if the record has no inputs).
+            active = self.kernel_state.context.active_summary_by_scope.get(
+                record.scope
+            )
+            anchor_ok: bool
+            if active is None:
+                # First summary for this scope — only OK if the record
+                # has no input summaries (otherwise it claims to extend
+                # a non-existent prior).
+                anchor_ok = len(record.input_summary_ids) == 0
+                anchor_detail = (
+                    "active_summary_by_scope empty but record has input_summary_ids"
+                )
+            else:
+                anchor_ok = active in record.input_summary_ids
+                anchor_detail = (
+                    f"active summary {active!r} not in record.input_summary_ids "
+                    f"{record.input_summary_ids!r}"
+                )
+
+            if not anchor_ok:
+                # Emit the proposed event so the journal shows the
+                # attempt, then fail. Both events go through
+                # _emit_system (no lease — Path A is policy-triggered
+                # in PR 5; Path B uses a lease but this PR doesn't
+                # introduce it yet).
+                self._emit_summary_proposed(record)
+                return self._reject_summary(
+                    record,
+                    reason=SummaryFailureReason.ANCHOR_CONFLICT,
+                    detail=anchor_detail,
+                    failed_validator="anchor",
+                    emit_proposed_first=False,  # already emitted
+                )
+
+            # Commit path: emit proposed → apply proposed effect →
+            # emit committed → apply committed effect.
+            self._emit_summary_proposed(record)
+            self._apply_effect(SummaryProposedEffect(record=record))
+
+            committed_at_event_id = self._emit_summary_committed(
+                record, supersedes_summary_ids=tuple(record.input_summary_ids)
+            )
+            self._apply_effect(
+                SummaryCommittedEffect(
+                    record=record,
+                    supersedes_summary_ids=tuple(record.input_summary_ids),
+                )
+            )
+            # Doctrine §7: a successful commit clears the backoff
+            # counter for this (summarizer_id, scope) pair so the next
+            # rolling cycle starts with a clean slate.
+            key = (record.summarizer_id, record.scope.as_tuple())
+            self.kernel_state.context.failure_count.pop(key, None)
+
+            return SummaryCommitResult(
+                committed=True,
+                summary_id=record.summary_id,
+                reason=None,
+                details=None,
+                failed_validator=None,
+                committed_at_event_id=committed_at_event_id,
+            )
+
+    def schedule_summarization(
+        self,
+        scope: ContextScope,
+        *,
+        covers_event_range: Optional[tuple[int, int]] = None,
+        trigger_pressure_ratio: float = 0.0,
+        triggering_event_id: int = -1,
+        ttl_s: Optional[float] = None,
+    ) -> "SchedulingResult":
+        """Path A entry — policy-triggered summarisation (doctrine P22 / §7).
+
+        Pre-conditions:
+
+        - ``RoomState.default_summarizer_id`` must be set.
+        - ``(default_summarizer_id, scope)`` must not be in
+          :attr:`ContextState.disabled_scopes`.
+
+        On success:
+
+        1. Acquire a SUMMARIZATION lease for the slot occupant with
+           ``triggered_by="policy"`` — gates on
+           :class:`_SummarizerSlotCheck` + the SUMMARIZE capability
+           check.
+        2. Emit ``summarization_scheduled`` audit event.
+        3. Return :class:`SchedulingResult` with the lease id.
+
+        The caller (typically a policy pre-turn hook in v0.4+) then
+        drives the actual summarisation off-lock and calls
+        :meth:`submit_summary_proposed` with the resulting record.
+
+        Path B (``SummarizeControlAction``) bypasses this method and
+        goes through the v0.3 PR 9 control-action lifecycle, then
+        acquires the SUMMARIZATION lease internally with
+        ``triggered_by="control_action"``.
+        """
+        self._assert_not_holding_lock("coordinator.schedule_summarization")
+
+        slot = self.state.default_summarizer_id
+        if slot is None:
+            return SchedulingResult(
+                scheduled=False,
+                lease_id=None,
+                summarizer_id=None,
+                scope=scope,
+                denial_reason="no_default_summarizer",
+            )
+
+        ctx_state = self.kernel_state.context
+        if (slot, scope.as_tuple()) in ctx_state.disabled_scopes:
+            return SchedulingResult(
+                scheduled=False,
+                lease_id=None,
+                summarizer_id=slot,
+                scope=scope,
+                denial_reason="scope_disabled",
+            )
+
+        # Default the covers range to the rolling tail.
+        if covers_event_range is None:
+            from loom.kernel.context import select_compaction_range
+            bus_length = len(self.bus.snapshot())
+            covers_event_range = select_compaction_range(
+                ctx_state, scope, bus_length=bus_length
+            )
+
+        context = SummarizationContext(
+            scope=scope,
+            covers_event_range=tuple(covers_event_range),
+            triggered_by="policy",
+            triggering_event_id=triggering_event_id,
+            required_capability=CapabilityName.EMIT_SUMMARY.value,
+            thread_id=scope.thread_id,
+        )
+        lease = self.acquire_typed_lease(
+            LeaseKind.SUMMARIZATION,
+            holder=slot,
+            context=context,
+            ttl_s=ttl_s,
+        )
+        if lease is None:
+            return SchedulingResult(
+                scheduled=False,
+                lease_id=None,
+                summarizer_id=slot,
+                scope=scope,
+                denial_reason="lease_denied",
+            )
+
+        # Audit event.
+        self._emit_system(
+            ev.summarization_scheduled(
+                scope=scope,
+                lease_id=lease.id,
+                summarizer_id=slot,
+                trigger_pressure_ratio=trigger_pressure_ratio,
+                triggered_by="policy",
+                thread_id=scope.thread_id,
+            ),
+            thread_id=scope.thread_id,
+        )
+        return SchedulingResult(
+            scheduled=True,
+            lease_id=lease.id,
+            summarizer_id=slot,
+            scope=scope,
+        )
+
+    def request_summarization(
+        self,
+        requester: str,
+        scope: ContextScope,
+        *,
+        covers_event_range: Optional[tuple[int, int]] = None,
+        triggering_event_id: int = -1,
+        ttl_s: Optional[float] = None,
+    ) -> "SchedulingResult":
+        """Path B entry — user/agent-triggered summarisation (doctrine P22).
+
+        Symmetric to :meth:`schedule_summarization` (Path A) but the
+        ``SummarizationContext.triggered_by`` is ``"control_action"``,
+        which makes :class:`_SummarizerSlotCheck` skip the slot check
+        (so a holder other than the default summariser can be granted
+        the lease as long as it has the SUMMARIZE capability).
+
+        Used by:
+
+        - The ``/summarize`` slash command (proposer = ``"user"``;
+          user holders bypass the capability gate per v0.3 P15).
+        - PR 9-style ``SummarizeControlAction`` (proposer = agent
+          holding ``CapabilityName.SUMMARIZE``).
+
+        Always converges with Path A at the SUMMARIZATION lease, so
+        the downstream commit pipeline (off-lock pre-validation +
+        under-lock anchor check) is byte-identical between paths.
+        """
+        self._assert_not_holding_lock("coordinator.request_summarization")
+
+        if covers_event_range is None:
+            from loom.kernel.context import select_compaction_range
+            bus_length = len(self.bus.snapshot())
+            covers_event_range = select_compaction_range(
+                self.kernel_state.context, scope, bus_length=bus_length
+            )
+
+        context = SummarizationContext(
+            scope=scope,
+            covers_event_range=tuple(covers_event_range),
+            triggered_by="control_action",
+            triggering_event_id=triggering_event_id,
+            required_capability=CapabilityName.SUMMARIZE.value,
+            thread_id=scope.thread_id,
+        )
+        lease = self.acquire_typed_lease(
+            LeaseKind.SUMMARIZATION,
+            holder=requester,
+            context=context,
+            ttl_s=ttl_s,
+        )
+        if lease is None:
+            return SchedulingResult(
+                scheduled=False,
+                lease_id=None,
+                summarizer_id=requester,
+                scope=scope,
+                denial_reason="lease_denied",
+            )
+
+        self._emit_system(
+            ev.summarization_scheduled(
+                scope=scope,
+                lease_id=lease.id,
+                summarizer_id=requester,
+                trigger_pressure_ratio=0.0,
+                triggered_by="control_action",
+                thread_id=scope.thread_id,
+            ),
+            thread_id=scope.thread_id,
+        )
+        return SchedulingResult(
+            scheduled=True,
+            lease_id=lease.id,
+            summarizer_id=requester,
+            scope=scope,
+        )
+
+    def _maybe_disable_scope_after_failure(
+        self,
+        *,
+        summarizer_id: str,
+        scope: ContextScope,
+        last_failed_summary_id: str,
+    ) -> None:
+        """If failure_count for ``(summarizer_id, scope)`` reached the
+        configured threshold and the scope isn't already disabled,
+        emit ``compaction_disabled`` and apply
+        :class:`CompactionDisabledEffect`. Caller MUST hold the lock.
+        """
+        key = (summarizer_id, scope.as_tuple())
+        if key in self.kernel_state.context.disabled_scopes:
+            return
+        count = self.kernel_state.context.failure_count.get(key, 0)
+        threshold = getattr(
+            self.config, "summarizer_max_consecutive_failures", 3
+        )
+        if count < threshold:
+            return
+        self._emit_system(
+            ev.compaction_disabled(
+                scope=scope,
+                summarizer_id=summarizer_id,
+                failure_count=count,
+                reason="consecutive_failures",
+                last_failed_summary_id=last_failed_summary_id,
+                thread_id=scope.thread_id,
+            ),
+            thread_id=scope.thread_id,
+        )
+        self._apply_effect(
+            CompactionDisabledEffect(
+                summarizer_id=summarizer_id,
+                scope=scope,
+                failure_count_at_disable=count,
+                reason="consecutive_failures",
+            )
+        )
+
+    def _emit_summary_proposed(self, record: SummaryRecord) -> int:
+        return self._emit_system(
+            ev.summary_proposed(
+                summary_id=record.summary_id,
+                scope=record.scope,
+                covers_event_range=record.covers_event_range,
+                proposed_text=record.text,
+                retained_event_ids=tuple(record.retained_event_ids),
+                input_summary_ids=tuple(record.input_summary_ids),
+                input_event_ranges=tuple(record.input_event_ranges),
+                model_id=record.model_id,
+                prompt_hash=record.prompt_hash,
+                summarizer_id=record.summarizer_id,
+                proposed_at_event_id=record.proposed_at_event_id,
+                thread_id=record.scope.thread_id,
+            ),
+            thread_id=record.scope.thread_id,
+        )
+
+    def _emit_summary_committed(
+        self,
+        record: SummaryRecord,
+        *,
+        supersedes_summary_ids: tuple[str, ...],
+    ) -> int:
+        return self._emit_system(
+            ev.summary_committed(
+                summary_id=record.summary_id,
+                scope=record.scope,
+                covers_event_range=record.covers_event_range,
+                proposed_text=record.text,
+                retained_event_ids=tuple(record.retained_event_ids),
+                input_summary_ids=tuple(record.input_summary_ids),
+                input_event_ranges=tuple(record.input_event_ranges),
+                model_id=record.model_id,
+                prompt_hash=record.prompt_hash,
+                summarizer_id=record.summarizer_id,
+                proposed_at_event_id=record.proposed_at_event_id,
+                supersedes_summary_ids=supersedes_summary_ids,
+                committed_at_event_id=-1,
+                thread_id=record.scope.thread_id,
+            ),
+            thread_id=record.scope.thread_id,
+        )
+
+    def _reject_summary(
+        self,
+        record: SummaryRecord,
+        *,
+        reason: SummaryFailureReason,
+        detail: str,
+        failed_validator: str,
+        emit_proposed_first: bool,
+    ) -> "SummaryCommitResult":
+        """Shared post-failure emit + apply path.
+
+        Apply runs under the coordinator lock; if we're already under
+        the lock (anchor-conflict branch), the caller passes
+        ``emit_proposed_first=False`` and ``_apply_effect`` runs
+        re-entrantly. Otherwise we acquire the lock here.
+        """
+        if emit_proposed_first:
+            self._emit_summary_proposed(record)
+
+        self._emit_system(
+            ev.summary_failed(
+                proposed_summary_id=record.summary_id,
+                scope=record.scope,
+                reason=reason.value,
+                details=detail,
+                failed_validator=failed_validator,
+                summarizer_id=record.summarizer_id,
+                thread_id=record.scope.thread_id,
+            ),
+            thread_id=record.scope.thread_id,
+        )
+        failed_effect = SummaryFailedEffect(
+            summarizer_id=record.summarizer_id,
+            scope=record.scope,
+            reason=reason,
+        )
+        if self._lock.is_held_by_current_thread():
+            self._apply_effect(failed_effect)
+            self._maybe_disable_scope_after_failure(
+                summarizer_id=record.summarizer_id,
+                scope=record.scope,
+                last_failed_summary_id=record.summary_id,
+            )
+        else:
+            with self._lock:
+                self._apply_effect(failed_effect)
+                self._maybe_disable_scope_after_failure(
+                    summarizer_id=record.summarizer_id,
+                    scope=record.scope,
+                    last_failed_summary_id=record.summary_id,
+                )
+
+        return SummaryCommitResult(
+            committed=False,
+            summary_id=record.summary_id,
+            reason=reason,
+            details=detail,
+            failed_validator=failed_validator,
+            committed_at_event_id=None,
+        )
+
     # ------------------------------------------------------------------
     # Membership
     # ------------------------------------------------------------------
@@ -458,6 +1562,7 @@ class RoomCoordinator:
     def register_participant(self, info: ParticipantInfo) -> None:
         with self._lock:
             self.state.add_participant(info)
+            self._bump_state_version()
             self.bus.post_internal(
                 ev.participant_added(info.id, info.role_hints), auth=_KERNEL_AUTH
             )
@@ -473,6 +1578,7 @@ class RoomCoordinator:
         """
         with self._lock:
             slot_changes = self.state.remove_participant(pid)
+            self._bump_state_version()
             self.bus.post_internal(ev.participant_removed(pid), auth=_KERNEL_AUTH)
 
             # Slot-change events. Only default_responder_changed is
@@ -667,7 +1773,7 @@ class RoomCoordinator:
                 return
             if self._user_turn and self._user_turn.state == "open":
                 self._close_user_turn_locked("topic_changed")
-            self.state.set_topic(new_topic)
+            self._apply_effect(TopicChangedEffect(topic=new_topic))
             self.bus.post_internal(ev.topic_changed(old, new_topic or ""), auth=_KERNEL_AUTH)
 
     def set_default_responder(self, pid: Optional[str]) -> None:
@@ -675,7 +1781,7 @@ class RoomCoordinator:
             old = self.state.default_responder_id
             if old == pid:
                 return
-            self.state.set_default_responder(pid)
+            self._apply_effect(DefaultResponderSetEffect(participant_id=pid))
             for lease in self._leases.values():
                 lease.valid = False
             self.bus.post_internal(ev.default_responder_changed(old, pid), auth=_KERNEL_AUTH)
@@ -685,7 +1791,7 @@ class RoomCoordinator:
             old = self.state.anchor_id
             if old == pid:
                 return
-            self.state.set_anchor(pid)
+            self._apply_effect(AnchorAssignedEffect(anchor_id=pid))
             self.bus.post_internal(
                 ev._control("anchor_changed", old_id=old, new_id=pid), auth=_KERNEL_AUTH
             )
@@ -695,7 +1801,7 @@ class RoomCoordinator:
             old = self.state.chair_id
             if old == pid:
                 return
-            self.state.set_chair(pid)
+            self._apply_effect(ChairAssignedEffect(chair_id=pid))
             self.bus.post_internal(
                 ev._control("chair_changed", old_id=old, new_id=pid), auth=_KERNEL_AUTH
             )
@@ -705,7 +1811,7 @@ class RoomCoordinator:
             old = self.state.default_summarizer_id
             if old == pid:
                 return
-            self.state.set_default_summarizer(pid)
+            self._apply_effect(DefaultSummarizerSetEffect(participant_id=pid))
             self.bus.post_internal(
                 ev._control("default_summarizer_changed", old_id=old, new_id=pid), auth=_KERNEL_AUTH
             )
@@ -722,10 +1828,18 @@ class RoomCoordinator:
         until reassigned.
         """
         with self._lock:
-            old = self.state.set_roles(roles)
-            new = dict(self.state.control.roles)
-            if new == old:
+            old = dict(self.state.control.roles)
+            # set_roles filters unknown participants; precompute the
+            # filtered mapping so the no-op short-circuit can run
+            # against the canonical "what set_roles would write" value
+            # without applying the effect twice.
+            filtered = {
+                pid: role for pid, role in roles.items() if pid in self.state.participants
+            }
+            if filtered == old:
                 return
+            self._apply_effect(RolesAssignedEffect(roles=filtered))
+            new = dict(self.state.control.roles)
             self.bus.post_internal(ev.roles_assigned(new), auth=_KERNEL_AUTH)
 
     def set_wait_for_user_flag(self, wait_for_user: bool) -> None:
@@ -741,15 +1855,20 @@ class RoomCoordinator:
             new = self.state.control.wait_for_user
             if old == new:
                 return
+            self._bump_state_version()
             self.bus.post_internal(ev.floor_updated(wait_for_user=new), auth=_KERNEL_AUTH)
 
     def set_style(self, style: StyleLevel) -> None:
         """Update the brevity preference."""
         with self._lock:
-            old = self.state.set_style(style)
-            new = self.state.control.style
-            if old == new:
+            old = self.state.control.style
+            if old == style:
                 return
+            # The reducer calls ``state.room.set_style`` which raises
+            # ``ValueError`` on an unknown style level — preserved
+            # post-PR 3 by letting the exception propagate.
+            self._apply_effect(StyleChangedEffect(style=style))
+            new = self.state.control.style
             self.bus.post_internal(ev.style_changed(old, new), auth=_KERNEL_AUTH)
 
     # ------------------------------------------------------------------
@@ -822,11 +1941,10 @@ class RoomCoordinator:
         except Exception as exc:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self.bus.post_internal(
-                ev._control(
-                    "policy_error",
+                ev.policy_error(
                     exception_class=type(exc).__name__,
                     message=str(exc)[:500],
-                    elapsed_ms=round(elapsed_ms, 3),
+                    elapsed_ms=elapsed_ms,
                     user_event_id=user_event.id,
                 ),
                 auth=_KERNEL_AUTH,
@@ -850,12 +1968,19 @@ class RoomCoordinator:
                 rationale="policy raised; turn closed (fail-closed)",
             )
         elapsed_ms = (time.monotonic() - t0) * 1000.0
-        if elapsed_ms > _POLICY_SLOW_THRESHOLD_MS:
+        # v0.3 PR 13 (closes audit D3): per-policy slow threshold via
+        # RoomConfig. v0.2.1 used the module-level constant
+        # ``_POLICY_SLOW_THRESHOLD_MS``; v0.3 reads from config so
+        # different policies can tune the observability noise floor.
+        threshold = float(
+            getattr(self.config, "policy_slow_threshold_ms",
+                    _POLICY_SLOW_THRESHOLD_MS)
+        )
+        if elapsed_ms > threshold:
             self.bus.post_internal(
-                ev._control(
-                    "policy_slow",
-                    elapsed_ms=round(elapsed_ms, 3),
-                    threshold_ms=_POLICY_SLOW_THRESHOLD_MS,
+                ev.policy_slow(
+                    elapsed_ms=elapsed_ms,
+                    threshold_ms=threshold,
                     user_event_id=user_event.id,
                 ),
                 auth=_KERNEL_AUTH,
@@ -1053,6 +2178,60 @@ class RoomCoordinator:
                 else:
                     self._close_user_turn_locked("idle_timeout")
 
+    def check_lease_ttl(self, *, now: Optional[float] = None) -> int:
+        """Proactively expire and reap leases past their TTL (v0.2.1, audit D1).
+
+        Without this sweep, a lease held while no stream is active stays
+        nominally valid until something accesses it via
+        :meth:`validate_lease` (which only fires from the stream path).
+        The watchdog calls this on each tick so lease state stays
+        authoritative — doctrine §control-plane.
+
+        For each expired lease (``expires_at < now``): mark
+        ``valid=False``, drop the lease from ``self._leases``, and
+        emit a ``lease_expired`` control event under
+        ``post_internal``. Returns the number of leases reaped.
+
+        Holds the coordinator lock for the iteration; emission happens
+        OUTSIDE the lock so a slow subscriber on the bus cannot stall
+        actor threads.
+        """
+        # P3.3 / audit TIME1: lease TTL math uses time.monotonic.
+        cutoff = now if now is not None else time.monotonic()
+        expired: list[TurnLease] = []
+        with self._lock:
+            for lease_id, lease in list(self._leases.items()):
+                if not lease.valid:
+                    continue
+                if lease.expires_at < cutoff:
+                    lease.valid = False
+                    self._leases.pop(lease_id, None)
+                    expired.append(lease)
+        # Emit OUTSIDE the lock — bus subscribers are user code.
+        for lease in expired:
+            self.bus.post_internal(
+                ev.lease_expired(
+                    holder=lease.holder,
+                    lease_id=lease.id,
+                    trigger_event_id=lease.trigger_event_id,
+                ),
+                auth=_KERNEL_AUTH,
+            )
+            # v0.3 PR 8: unified termination event alongside the
+            # v0.2.1 ``lease_expired`` so v0.3 consumers can listen on
+            # one stream. ``lease_expired`` stays until the v0.3.x
+            # release-cut drops the legacy duplicate.
+            self.bus.post_internal(
+                ev.lease_closed(
+                    lease_id=lease.id,
+                    holder=lease.holder,
+                    kind=LeaseKind.USER_TURN.value,
+                    reason="expired",
+                ),
+                auth=_KERNEL_AUTH,
+            )
+        return len(expired)
+
     # ------------------------------------------------------------------
     # Watchdog thread (v0.2)
     # ------------------------------------------------------------------
@@ -1095,6 +2274,19 @@ class RoomCoordinator:
                 self.check_idle_timeout()
             except Exception:
                 # Best-effort: never crash on a single bad tick.
+                pass
+            try:
+                # v0.2.1 (PR 1, audit finding D1): proactively reap
+                # leases past TTL so lease state stays authoritative.
+                self.check_lease_ttl()
+            except Exception:
+                pass
+            try:
+                # v0.3 PR 12 (closes audit D2): catch stalled streams
+                # whose lease is still nominally valid but whose
+                # provider has gone silent.
+                self.check_streaming_stall()
+            except Exception:
                 pass
             # ``Event.wait`` returns True if the event was set, False on
             # timeout — either way we re-enter the loop and the
@@ -1235,6 +2427,164 @@ class RoomCoordinator:
             self._leases[lease.id] = lease
             return lease
 
+    def acquire_typed_lease(
+        self,
+        kind: LeaseKind,
+        holder: str,
+        context: LeaseContext,
+        *,
+        ttl_s: Optional[float] = None,
+    ) -> Optional[Lease]:
+        """v0.3 PR 7 / doctrine §3 — acquire a typed lease of any kind.
+
+        Sibling to v0.2's :meth:`acquire_lease` (which remains the
+        canonical USER_TURN path). For ``kind=USER_TURN`` this delegates
+        to :meth:`acquire_lease` to keep behavior byte-identical; for
+        all other kinds it runs the check chain filtered by
+        :func:`check_applies_to` and registers the granted lease in
+        ``self._typed_leases``.
+
+        On rejection, emits ``lease_denied`` with the failing check's
+        ``name`` (same emit pattern as v0.2). On grant, returns a
+        :class:`Lease` with a fresh ``trace_span_id`` under the room's
+        trace root.
+        """
+        with self._lock:
+            if kind == LeaseKind.USER_TURN:
+                # USER_TURN keeps the v0.2 path: extract the v0.2-shape
+                # parameters from the context and delegate. This avoids
+                # parallel maintenance burden for the dominant kind.
+                if not isinstance(context, UserTurnContext):
+                    raise TypeError(
+                        "USER_TURN lease requires UserTurnContext"
+                    )
+                legacy = self._acquire_user_turn_lease_locked(
+                    holder=holder,
+                    trigger_event_id=context.trigger_event_id,
+                    is_direct_mention=False,
+                )
+                if legacy is None:
+                    return None
+                span = self.new_child_span()
+                lease = Lease(
+                    id=legacy.id,
+                    kind=kind,
+                    holder=holder,
+                    context=context,
+                    acquired_at=legacy.acquired_at,
+                    expires_at=legacy.expires_at,
+                    valid=True,
+                    trace_span_id=span.span_id,
+                )
+                self._typed_leases[lease.id] = lease
+                return lease
+
+            # Non-USER_TURN: run the check chain filtered by kind.
+            self._pending_lease_context = context
+            try:
+                checks = self.config.lease_checks or DEFAULT_LEASE_CHECKS
+                for chk in checks:
+                    if kind not in check_applies_to(chk):
+                        continue
+                    try:
+                        result = chk.check(
+                            holder=holder,
+                            trigger_event_id=getattr(context, "target_event_id", -1) or -1,
+                            is_direct_mention=False,
+                            coordinator=self,
+                        )
+                    except Exception as exc:
+                        result = LeaseCheckResult(
+                            False, f"check_raised:{type(exc).__name__}"
+                        )
+                    if not result.passed:
+                        self.bus.post_internal(
+                            ev.lease_denied(
+                                holder=holder,
+                                check_name=chk.name,
+                                deny_reason=result.deny_reason or "denied",
+                                trigger_event_id=getattr(
+                                    context, "target_event_id", -1
+                                ) or -1,
+                            ),
+                            auth=_KERNEL_AUTH,
+                        )
+                        return None
+            finally:
+                self._pending_lease_context = None
+
+            now = time.monotonic()
+            ttl = ttl_s if ttl_s is not None else float(self.config.lease_ttl_s)
+            span = self.new_child_span()
+            lease = Lease(
+                id=self._next_lease_id,
+                kind=kind,
+                holder=holder,
+                context=context,
+                acquired_at=now,
+                expires_at=now + ttl,
+                valid=True,
+                trace_span_id=span.span_id,
+            )
+            self._next_lease_id += 1
+            self._typed_leases[lease.id] = lease
+            return lease
+
+    def _acquire_user_turn_lease_locked(
+        self,
+        *,
+        holder: str,
+        trigger_event_id: int,
+        is_direct_mention: bool,
+    ) -> Optional[TurnLease]:
+        """Inline the v0.2 ``acquire_lease`` body so the typed path
+        can reuse it under-lock without re-entering the public API.
+
+        Caller (``acquire_typed_lease``) already holds ``self._lock``.
+        """
+        checks = self.config.lease_checks or DEFAULT_LEASE_CHECKS
+        for chk in checks:
+            # v0.3: respect applies_to so a v0.2-shape USER_TURN call
+            # site skips CONTROL_ACTION-only checks (``_CapabilityCheck``).
+            if LeaseKind.USER_TURN not in check_applies_to(chk):
+                continue
+            try:
+                result = chk.check(
+                    holder=holder,
+                    trigger_event_id=trigger_event_id,
+                    is_direct_mention=is_direct_mention,
+                    coordinator=self,
+                )
+            except Exception as exc:
+                result = LeaseCheckResult(False, f"check_raised:{type(exc).__name__}")
+            if not result.passed:
+                self.bus.post_internal(
+                    ev.lease_denied(
+                        holder=holder,
+                        check_name=chk.name,
+                        deny_reason=result.deny_reason or "denied",
+                        trigger_event_id=trigger_event_id,
+                    ),
+                    auth=_KERNEL_AUTH,
+                )
+                return None
+
+        ut = self._user_turn
+        assert ut is not None
+        now = time.monotonic()
+        lease = TurnLease(
+            id=self._next_lease_id,
+            holder=holder,
+            user_turn_id=ut.id,
+            trigger_event_id=trigger_event_id,
+            room_epoch=self.state.room_epoch,
+            acquired_at=now,
+            expires_at=now + self.config.lease_ttl_s,
+        )
+        self._next_lease_id += 1
+        self._leases[lease.id] = lease
+        return lease
+
     def validate_lease(self, lease: TurnLease) -> bool:
         with self._lock:
             if not lease.valid:
@@ -1252,10 +2602,88 @@ class RoomCoordinator:
                 return False
             return True
 
+    def on_stream_chunk(self, lease: TurnLease, *, now: Optional[float] = None) -> None:
+        """v0.3 PR 12 — record activity for the streaming-stall watchdog.
+
+        Called by :func:`streaming.run_streaming_call` on each emitted
+        chunk so the watchdog can distinguish "stream is alive but
+        slow" from "stream is dead and the lease is leaking". Uses
+        ``time.monotonic`` (TTL/duration math discipline; see
+        ``docs/timing-discipline.md``).
+        """
+        n = now if now is not None else time.monotonic()
+        with self._lock:
+            self._last_chunk_at[lease.id] = n
+
+    def check_streaming_stall(self, *, now: Optional[float] = None) -> int:
+        """v0.3 PR 12 / closes audit D2 — reap leases with silent streams.
+
+        Iterates active leases; any whose ``_last_chunk_at`` is older
+        than ``RoomConfig.stream_stall_threshold_s`` (or whose stream
+        has never produced a chunk after the lease's
+        ``acquired_at + threshold``) is marked invalid; the
+        coordinator emits ``stream_stalled`` then
+        ``lease_closed(reason="aborted")`` and pops the lease.
+
+        Holds the coordinator lock for the snapshot iteration;
+        emission happens OUTSIDE the lock so a slow subscriber on the
+        bus cannot stall actor threads (doctrine P4).
+
+        Returns the count of stalled leases reaped on this tick.
+        """
+        cutoff = now if now is not None else time.monotonic()
+        threshold = float(self.config.stream_stall_threshold_s)
+        stalled: list[tuple[TurnLease, float]] = []
+        with self._lock:
+            for lease_id, lease in list(self._leases.items()):
+                if not lease.valid:
+                    continue
+                last = self._last_chunk_at.get(lease_id, lease.acquired_at)
+                silent = cutoff - last
+                if silent > threshold:
+                    lease.valid = False
+                    self._leases.pop(lease_id, None)
+                    self._last_chunk_at.pop(lease_id, None)
+                    stalled.append((lease, silent))
+        # Off-lock emission (doctrine P4): bus subscribers are user code.
+        for lease, silent in stalled:
+            self.bus.post_internal(
+                ev.stream_stalled(
+                    lease_id=lease.id,
+                    holder=lease.holder,
+                    seconds_silent=silent,
+                ),
+                auth=_KERNEL_AUTH,
+            )
+            self.bus.post_internal(
+                ev.lease_closed(
+                    lease_id=lease.id,
+                    holder=lease.holder,
+                    kind=LeaseKind.USER_TURN.value,
+                    reason="aborted",
+                ),
+                auth=_KERNEL_AUTH,
+            )
+        return len(stalled)
+
     def release_lease(self, lease: TurnLease) -> None:
         with self._lock:
             self._leases.pop(lease.id, None)
+            self._last_chunk_at.pop(lease.id, None)
             lease.valid = False
+            # v0.3 PR 8 (doctrine P2 / §4): emit the unified
+            # ``lease_closed`` event alongside the v0.2 lifecycle.
+            # ``release`` is the "clean termination" reason; PR 12
+            # adds richer reasons (aborted / aborted_validation).
+            self.bus.post_internal(
+                ev.lease_closed(
+                    lease_id=lease.id,
+                    holder=lease.holder,
+                    kind=LeaseKind.USER_TURN.value,
+                    reason="released",
+                ),
+                auth=_KERNEL_AUTH,
+            )
 
     # ------------------------------------------------------------------
     # Stream / decision callbacks (called by streaming.py & actor.py)

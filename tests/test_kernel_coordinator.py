@@ -31,6 +31,7 @@ def _setup(
     default_responder=None,
     members=("loom", "claude_code", "gemini_cli"),
     config=None,
+    **config_kwargs,
 ):
     bus = MessageBus()
     state = RoomState(
@@ -39,6 +40,7 @@ def _setup(
             user_turn_idle_timeout_s=20,
             user_turn_debounce_ms=200,
             lease_ttl_s=60,
+            **config_kwargs,
         )
     )
     for i, pid in enumerate(members):
@@ -1007,6 +1009,141 @@ class WatchdogThreadLifecycle(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Proactive lease TTL sweep (v0.2.1 PR 1, audit finding D1)
+# ---------------------------------------------------------------------------
+
+
+class LeaseTTLWatchdog(unittest.TestCase):
+    """Proactive lease TTL sweep via ``RoomCoordinator.check_lease_ttl``.
+
+    Without the sweep, a lease held while no stream is active stays
+    nominally ``valid=True`` past its TTL until the next reactive
+    access. Doctrine §control-plane requires lease state to be
+    authoritative.
+    """
+
+    def test_check_lease_ttl_reaps_expired_lease(self):
+        bus, state, c = _setup(default_responder="loom")
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        lease = c.acquire_lease("loom", e.id)
+        self.assertIsNotNone(lease)
+        # Push the lease into the past via the same monotonic clock the
+        # coordinator uses (mirrors test_validate_lease_fails_after_expiry).
+        lease.expires_at = time.monotonic() - 1.0
+
+        reaped = c.check_lease_ttl()
+        self.assertEqual(reaped, 1)
+        # Lease is removed from the coordinator's active set and
+        # marked invalid.
+        self.assertFalse(lease.valid)
+        self.assertEqual(c.in_flight_lease_count(), 0)
+
+    def test_check_lease_ttl_emits_lease_expired_event(self):
+        bus, state, c = _setup(default_responder="loom")
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        lease = c.acquire_lease("loom", e.id)
+        lease.expires_at = time.monotonic() - 1.0
+        c.check_lease_ttl()
+        # Find the lease_expired control event.
+        events = bus.snapshot()
+        expired = [
+            x for x in events if ev.control_type_of(x) == "lease_expired"
+        ]
+        self.assertEqual(len(expired), 1)
+        body = expired[0].body
+        self.assertEqual(body["holder"], "loom")
+        self.assertEqual(body["lease_id"], lease.id)
+        self.assertEqual(body["trigger_event_id"], e.id)
+        self.assertEqual(expired[0].sender, "system")
+
+    def test_check_lease_ttl_leaves_unexpired_leases_alone(self):
+        bus, state, c = _setup(default_responder="loom")
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        lease = c.acquire_lease("loom", e.id)
+        # Default lease_ttl_s=60 in _setup; the lease is fresh.
+        reaped = c.check_lease_ttl()
+        self.assertEqual(reaped, 0)
+        self.assertTrue(lease.valid)
+        self.assertEqual(c.in_flight_lease_count(), 1)
+
+    def test_check_lease_ttl_ignores_already_invalid_leases(self):
+        bus, state, c = _setup(default_responder="loom")
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        lease = c.acquire_lease("loom", e.id)
+        # Release marks invalid AND pops the lease. The sweep should
+        # be a no-op.
+        c.release_lease(lease)
+        reaped = c.check_lease_ttl()
+        self.assertEqual(reaped, 0)
+        # And no spurious lease_expired event got emitted.
+        events = bus.snapshot()
+        self.assertEqual(
+            sum(1 for x in events if ev.control_type_of(x) == "lease_expired"),
+            0,
+        )
+
+    def test_watchdog_thread_fires_check_lease_ttl(self):
+        # The watchdog loop must call check_lease_ttl alongside
+        # check_idle_timeout each tick.
+        import time as _time
+
+        bus = MessageBus()
+        cfg = RoomConfig(watchdog_interval_s=0.05)
+        state = RoomState(config=cfg)
+        state.add_participant(ParticipantInfo(id="loom"))
+        c = RoomCoordinator(bus, state)
+        ticks = []
+        orig = c.check_lease_ttl
+
+        def _spy(**kwargs):
+            ticks.append(_time.monotonic())
+            return orig(**kwargs)
+
+        c.check_lease_ttl = _spy  # type: ignore[method-assign]
+        c.start_watchdog()
+        _time.sleep(0.25)
+        c.stop_watchdog(timeout=2.0)
+        self.assertGreaterEqual(len(ticks), 2)
+
+    def test_watchdog_swallows_check_lease_ttl_exceptions(self):
+        # A bad check_lease_ttl must not crash the watchdog thread or
+        # block check_idle_timeout from also firing.
+        import time as _time
+
+        bus = MessageBus()
+        cfg = RoomConfig(watchdog_interval_s=0.05)
+        state = RoomState(config=cfg)
+        state.add_participant(ParticipantInfo(id="loom"))
+        c = RoomCoordinator(bus, state)
+
+        def _bad(**kwargs):
+            raise RuntimeError("boom")
+
+        c.check_lease_ttl = _bad  # type: ignore[method-assign]
+        c.start_watchdog()
+        _time.sleep(0.2)
+        self.assertTrue(c._watchdog_thread.is_alive())
+        c.stop_watchdog(timeout=2.0)
+
+    def test_check_lease_ttl_now_kwarg_drives_decision(self):
+        # Passing ``now`` lets tests / callers compare against a
+        # deterministic monotonic value.
+        bus, state, c = _setup(default_responder="loom")
+        e = _user_post(bus, "hi")
+        _open_default(c, e, "loom")
+        lease = c.acquire_lease("loom", e.id)
+        # now > expires_at → reap; now < expires_at → keep.
+        self.assertEqual(c.check_lease_ttl(now=lease.expires_at - 1.0), 0)
+        self.assertTrue(lease.valid)
+        self.assertEqual(c.check_lease_ttl(now=lease.expires_at + 1.0), 1)
+        self.assertFalse(lease.valid)
+
+
+# ---------------------------------------------------------------------------
 # Skip handling
 # ---------------------------------------------------------------------------
 
@@ -1481,19 +1618,16 @@ class PolicyWatchdog(unittest.TestCase):
 
     def test_policy_slow_event_emitted(self):
         # The coordinator emits ``policy_slow`` when classify_fn exceeds
-        # the threshold (~100ms). We monkeypatch the threshold to ~0 so a
-        # negligible call still trips it without slowing the test.
-        from loom.kernel import coordinator as coord
-
-        bus, state, c = _setup(default_responder="loom")
+        # the threshold. v0.3 PR 13 moved the threshold from a module
+        # constant to ``RoomConfig.policy_slow_threshold_ms`` (closes
+        # audit D3); set it to a negative value at construction so a
+        # negligible call trips it without slowing the test.
+        bus, state, c = _setup(
+            default_responder="loom", policy_slow_threshold_ms=-1.0
+        )
         e = _user_post(bus, "hi")
         plan = plan_for_default("loom", reason="t", target_event_ids=[e.id])
-        original = coord._POLICY_SLOW_THRESHOLD_MS
-        coord._POLICY_SLOW_THRESHOLD_MS = -1.0
-        try:
-            c.post_user_event_and_open_turn(e, lambda _e: plan)
-        finally:
-            coord._POLICY_SLOW_THRESHOLD_MS = original
+        c.post_user_event_and_open_turn(e, lambda _e: plan)
         slow = [x for x in bus.snapshot() if ev.control_type_of(x) == "policy_slow"]
         self.assertEqual(len(slow), 1)
         self.assertEqual(slow[0].body["user_event_id"], e.id)

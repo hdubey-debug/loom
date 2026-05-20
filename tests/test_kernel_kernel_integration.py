@@ -229,8 +229,9 @@ class JournaledSessionIntegration(unittest.TestCase):
             self.assertTrue(any(e["kind"] == "chat" and e["sender"] == "alpha" for e in decoded))
 
             snapshot = json.loads(snapshot_path.read_text())
-            self.assertEqual(snapshot["current_user_turn_id"], None)
-            self.assertEqual(snapshot["participants"][0]["id"], "alpha")
+            # v0.3 PR 1 (v6 envelope): RoomState fields nest under "room".
+            self.assertEqual(snapshot["room"]["current_user_turn_id"], None)
+            self.assertEqual(snapshot["room"]["participants"][0]["id"], "alpha")
             self.assertEqual(turn.closure_reason, "completed")
 
 

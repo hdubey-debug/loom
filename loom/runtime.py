@@ -190,7 +190,11 @@ class LoomSession:
             a.stop(timeout=timeout)
         if self.journal is not None:
             try:
-                self.journal.snapshot(self.state)
+                # v0.3 PR 1: snapshot KernelState (canonical v0.3 root).
+                # Journal.snapshot also accepts RoomState for back-compat
+                # but kernel_state carries the reserved-subsystem slots
+                # so v6 envelope shape is consistent across all writes.
+                self.journal.snapshot(self.coordinator.kernel_state)
             except Exception:
                 pass
             self.journal.close()
@@ -259,10 +263,14 @@ def build_loom_session(
         bus.subscribe(journal.on_event)
         # Periodic snapshots: return a dict so the journal's background
         # writer thread does the slow disk work without blocking the
-        # post path. Synchronous shutdown still goes through
-        # ``journal.snapshot(state)`` directly in :meth:`LoomSession.stop`.
+        # post path. v0.3 PR 1: pass the KernelState (canonical v0.3
+        # root) so reserved subsystem slots serialize as ``null`` from
+        # day one and later PRs' sub-states join the envelope without a
+        # runtime change. Synchronous shutdown still goes through
+        # ``journal.snapshot(coord.kernel_state)`` directly in
+        # :meth:`LoomSession.stop`.
         journal.set_snapshot_due_callback(
-            lambda: Journal._state_to_dict(state)  # type: ignore[arg-type]
+            lambda: Journal._state_to_dict(coord.kernel_state)
         )
 
         # Surface write failures as a ``journal_error`` control event so

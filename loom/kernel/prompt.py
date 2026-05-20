@@ -525,17 +525,39 @@ def build_prompt(
     # ------------------------------------------------------------------
     # 2. Latest summary
     # ------------------------------------------------------------------
+    # v0.3.x PR 4 (doctrine §6 / study/14): the canonical source is
+    # ``KernelState.context.active_summary_by_scope``. When that slot
+    # is empty for the room/main-thread scope, fall back to the legacy
+    # ``summary`` event on the bus so v0.3 sessions that haven't yet
+    # produced a compaction-event chain continue to render their
+    # legacy summary.
     summary_block = ""
-    main_summaries = bus.snapshot(
-        audience=actor_id,
-        channel="main",
-        kinds=["summary"],
+    from loom.kernel.context import ContextScope as _ContextScope
+
+    main_scope = _ContextScope(
+        room_id=getattr(coordinator.config, "room_id", "main"),
+        thread_id="main",
     )
-    if main_summaries:
-        latest = main_summaries[-1]
+    kctx = coordinator.kernel_state.context
+    active_id = kctx.active_summary_by_scope.get(main_scope)
+    if active_id is not None and active_id in kctx.summaries:
+        rec = kctx.summaries[active_id]
         summary_block = (
-            f"<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n{latest.body}\n<<<END SUMMARY>>>"
+            "<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n"
+            f"{rec.text}\n"
+            "<<<END SUMMARY>>>"
         )
+    else:
+        main_summaries = bus.snapshot(
+            audience=actor_id,
+            channel="main",
+            kinds=["summary"],
+        )
+        if main_summaries:
+            latest = main_summaries[-1]
+            summary_block = (
+                f"<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n{latest.body}\n<<<END SUMMARY>>>"
+            )
 
     # ------------------------------------------------------------------
     # 3. Transcript (sandboxed)

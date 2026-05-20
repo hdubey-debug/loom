@@ -355,6 +355,18 @@ class EventInvariants(unittest.TestCase):
             ev.style_changed("normal", "brief"),
             ev.journal_error("OSError", "disk full"),
             ev.actor_error("loom", "RuntimeError", "boom"),
+            ev.lease_denied(
+                holder="loom",
+                check_name="throttle",
+                deny_reason="throttle_exceeded",
+                trigger_event_id=0,
+            ),
+            ev.lease_expired(holder="loom", lease_id=1, trigger_event_id=0),
+            ev.policy_slow(elapsed_ms=137.0, threshold_ms=100.0, user_event_id=0),
+            ev.policy_error(
+                exception_class="RuntimeError", message="boom",
+                elapsed_ms=1.0, user_event_id=0,
+            ),
             ev.stream_start(lease_id=1, participant_id="loom", trigger_event_id=0),
             ev.stream_delta(lease_id=1, participant_id="loom", text="x"),
             ev.stream_end(
@@ -416,6 +428,194 @@ class EventInvariants(unittest.TestCase):
         # control events authored by callers.
         with self.assertRaises(ValueError):
             ev._control("not_a_real_control_type", foo=1)
+
+
+# ---------------------------------------------------------------------------
+# v0.2.1 envelope additions — schema_version + causal_refs (PR 3 of the
+# hardening audit; doctrine principles P7 and P11).
+# ---------------------------------------------------------------------------
+
+
+class PolicyEventConstructors(unittest.TestCase):
+    """Typed constructors for ``policy_slow`` and ``policy_error``
+    (v0.2.1 PR 2, audit finding C2). Previously emitted via inline
+    ``_control(...)`` calls at ``coordinator.py:824`` / 854."""
+
+    def test_policy_slow_shape(self):
+        e = ev.policy_slow(elapsed_ms=137.456, threshold_ms=100.0, user_event_id=42)
+        self.assertEqual(ev.control_type_of(e), "policy_slow")
+        self.assertEqual(e.sender, "system")
+        self.assertEqual(e.body["elapsed_ms"], 137.456)
+        self.assertEqual(e.body["threshold_ms"], 100.0)
+        self.assertEqual(e.body["user_event_id"], 42)
+
+    def test_policy_slow_is_known_control(self):
+        e = ev.policy_slow(elapsed_ms=137.456, threshold_ms=100.0, user_event_id=42)
+        self.assertTrue(ev.is_known_control(e))
+
+    def test_policy_slow_roundtrip(self):
+        original = ev.policy_slow(
+            elapsed_ms=137.456, threshold_ms=100.0, user_event_id=42
+        )
+        line = original.to_jsonl()
+        restored = ev.Event.from_jsonl(line)
+        self.assertEqual(restored, original)
+
+    def test_policy_error_shape(self):
+        e = ev.policy_error(
+            exception_class="RuntimeError",
+            message="something broke",
+            elapsed_ms=12.5,
+            user_event_id=7,
+        )
+        self.assertEqual(ev.control_type_of(e), "policy_error")
+        self.assertEqual(e.sender, "system")
+        self.assertEqual(e.body["exception_class"], "RuntimeError")
+        self.assertEqual(e.body["elapsed_ms"], 12.5)
+        self.assertEqual(e.body["user_event_id"], 7)
+
+    def test_policy_error_redacts_message(self):
+        # Pattern from redact_error_text's seven default detectors —
+        # API-key-shaped strings get scrubbed at the kernel boundary
+        # so a leaky policy exception cannot reach the journal.
+        leaky = "config failed with sk-abc123def456ghi789jkl012mno345pqr678stu901"
+        e = ev.policy_error(
+            exception_class="RuntimeError",
+            message=leaky,
+            elapsed_ms=1.0,
+            user_event_id=0,
+        )
+        # The exact replacement string is internal; assert the secret
+        # itself is gone.
+        self.assertNotIn("sk-abc123def456ghi789jkl012mno345pqr678stu901", e.body["message"])
+
+    def test_policy_error_is_known_control(self):
+        e = ev.policy_error(
+            exception_class="RuntimeError", message="boom",
+            elapsed_ms=1.0, user_event_id=0,
+        )
+        self.assertTrue(ev.is_known_control(e))
+
+    def test_policy_error_roundtrip(self):
+        original = ev.policy_error(
+            exception_class="RuntimeError",
+            message="boom",
+            elapsed_ms=1.0,
+            user_event_id=0,
+        )
+        line = original.to_jsonl()
+        restored = ev.Event.from_jsonl(line)
+        self.assertEqual(restored, original)
+
+    def test_payload_validator_rejects_missing_field(self):
+        # The dispatch table validators reject malformed bodies on
+        # journal replay so a tampered line cannot install a
+        # half-built event.
+        bad = (
+            '{"kind":"control","sender":"system",'
+            '"body":{"control_type":"policy_slow","elapsed_ms":1.0,"threshold_ms":100.0}}'
+        )
+        with self.assertRaises(ev.EventShapeError):
+            ev.Event.from_jsonl(bad)
+
+    def test_payload_validator_rejects_wrong_type(self):
+        bad = (
+            '{"kind":"control","sender":"system",'
+            '"body":{"control_type":"policy_error","exception_class":"X",'
+            '"message":"y","elapsed_ms":"slow","user_event_id":0}}'
+        )
+        with self.assertRaises(ev.EventShapeError):
+            ev.Event.from_jsonl(bad)
+
+
+class EventEnvelopeVersioning(unittest.TestCase):
+    """Envelope-level ``schema_version`` and reserved ``causal_refs``.
+
+    Defaults, round-trip stability, validation, and backward-compat
+    against v0.2.0-shaped journal lines that lack the new keys.
+    """
+
+    def test_default_schema_version_is_1(self):
+        e = ev.chat(sender="loom", body="hi")
+        self.assertEqual(e.schema_version, 1)
+
+    def test_default_causal_refs_is_empty_tuple(self):
+        e = ev.chat(sender="loom", body="hi")
+        self.assertEqual(e.causal_refs, ())
+        self.assertIsInstance(e.causal_refs, tuple)
+
+    def test_roundtrip_preserves_envelope_fields(self):
+        original = ev.chat(sender="loom", body="hi")
+        line = original.to_jsonl()
+        restored = ev.Event.from_jsonl(line)
+        self.assertEqual(restored.schema_version, 1)
+        self.assertEqual(restored.causal_refs, ())
+        self.assertEqual(restored, original)
+
+    def test_legacy_v020_line_loads_with_defaults(self):
+        # A v0.2.0-shaped JSON line (no schema_version, no causal_refs)
+        # must deserialize cleanly with the envelope defaults applied —
+        # this is the backward-compat guarantee from finding C1.
+        legacy_line = (
+            '{"kind":"chat","sender":"user","body":"hi","channel":"main",'
+            '"addressees":[],"room_epoch":0,"user_turn_id":null,"meta":{},'
+            '"id":42,"ts":1714329600.5}'
+        )
+        e = ev.Event.from_jsonl(legacy_line)
+        self.assertEqual(e.schema_version, 1)
+        self.assertEqual(e.causal_refs, ())
+        self.assertEqual(e.id, 42)
+        self.assertEqual(e.body, "hi")
+
+    def test_causal_refs_list_in_json_coerces_to_tuple(self):
+        # JSON has no tuple primitive — round-tripped causal_refs comes
+        # back as a list. ``__post_init__`` must coerce so equality
+        # against a fresh-construction Event holds.
+        original = ev.chat(sender="loom", body="hi")
+        line = original.to_jsonl()
+        restored = ev.Event.from_jsonl(line)
+        self.assertIsInstance(restored.causal_refs, tuple)
+        self.assertEqual(restored.causal_refs, original.causal_refs)
+
+    def test_invalid_schema_version_rejected(self):
+        # Zero / negative / non-int schema_version is rejected via the
+        # standard EventShapeError path so a tampered journal line
+        # cannot install an unparseable envelope version.
+        bad_line = (
+            '{"kind":"chat","sender":"user","body":"hi","schema_version":0}'
+        )
+        with self.assertRaises(ev.EventShapeError):
+            ev.Event.from_jsonl(bad_line)
+        bad_line = (
+            '{"kind":"chat","sender":"user","body":"hi","schema_version":"v1"}'
+        )
+        with self.assertRaises(ev.EventShapeError):
+            ev.Event.from_jsonl(bad_line)
+
+    def test_invalid_causal_refs_rejected(self):
+        bad_line = (
+            '{"kind":"chat","sender":"user","body":"hi","causal_refs":"oops"}'
+        )
+        with self.assertRaises(ev.EventShapeError):
+            ev.Event.from_jsonl(bad_line)
+
+    def test_every_factory_has_v1_envelope(self):
+        # Property: every constructor in events.py emits an event with
+        # ``schema_version >= 1`` and ``causal_refs == ()`` — v0.2.1
+        # reserves the slots but does not populate them.
+        for e in EventInvariants._all_factories():
+            self.assertGreaterEqual(e.schema_version, 1)
+            self.assertEqual(e.causal_refs, ())
+
+    def test_every_factory_envelope_round_trips(self):
+        # Stronger than the existing JsonlRoundTrip cases: walk every
+        # factory and assert the envelope fields survive intact.
+        for original in EventInvariants._all_factories():
+            line = original.to_jsonl()
+            restored = ev.Event.from_jsonl(line)
+            self.assertEqual(restored.schema_version, original.schema_version)
+            self.assertEqual(restored.causal_refs, original.causal_refs)
+            self.assertEqual(restored, original)
 
 
 if __name__ == "__main__":

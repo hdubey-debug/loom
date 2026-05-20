@@ -79,11 +79,17 @@ class StateSnapshot(unittest.TestCase):
             j.snapshot(self._state())
             data = json.loads((Path(tmpdir) / "room_state.json").read_text())
             self.assertEqual(data["version"], SNAPSHOT_VERSION)
-            self.assertEqual(data["default_responder_id"], "claude_code")
-            self.assertEqual(data["topic"], "god's existence")
-            self.assertEqual(data["last_compacted_event_id"], 42)
-            self.assertEqual({p["id"] for p in data["participants"]}, {"loom", "claude_code"})
-            # Mode/debate keys must NOT appear in v2 snapshots.
+            # v0.3 PR 1 (v6 envelope): RoomState fields nest under "room".
+            self.assertEqual(data["room"]["default_responder_id"], "claude_code")
+            self.assertEqual(data["room"]["topic"], "god's existence")
+            self.assertEqual(data["room"]["last_compacted_event_id"], 42)
+            self.assertEqual(
+                {p["id"] for p in data["room"]["participants"]}, {"loom", "claude_code"}
+            )
+            # v6 sibling slots are reserved (PR 5/6/13 populate them).
+            for slot in ("capabilities", "budget", "actors", "workflow", "tools"):
+                self.assertIsNone(data[slot])
+            # Mode/debate keys must NOT appear in v6 snapshots.
             self.assertNotIn("mode", data)
             self.assertNotIn("debate", data)
 
@@ -97,7 +103,7 @@ class StateSnapshot(unittest.TestCase):
             s2.set_topic("second")
             j.snapshot(s2)
             data = json.loads((Path(tmpdir) / "room_state.json").read_text())
-            self.assertEqual(data["topic"], "second")
+            self.assertEqual(data["room"]["topic"], "second")
             tmp = Path(tmpdir) / "room_state.json.tmp"
             self.assertFalse(tmp.exists())
 
@@ -763,11 +769,21 @@ class RestoreState(unittest.TestCase):
         # corrupted partial write) must restore to a state with
         # room_epoch == 0 — never a Python error.
         cfg = RoomConfig()
-        # Minimal v2-shaped dict missing the room_epoch key.
+        # v0.3 PR 1 (v6 envelope): RoomState fields nest under "room".
+        # The room sub-dict missing room_epoch is the v6 analogue of
+        # the original v2-shaped corruption case.
         state_data = {
             "version": SNAPSHOT_VERSION,
-            "topic": "design review",
-            "participants": [],
+            "room": {
+                "topic": "design review",
+                "participants": [],
+            },
+            "capabilities": None,
+            "budget": None,
+            "actors": None,
+            "workflow": None,
+            "tools": None,
+            "kernel_version": 0,
         }
         restored = restore_state(state_data, cfg)
         self.assertEqual(restored.room_epoch, 0)

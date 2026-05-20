@@ -165,7 +165,14 @@ def run_streaming_call(
     ``status="committed"``, also posts the canonical ``chat`` event.
     Always calls ``coordinator.on_stream_end(...)`` exactly once with
     the terminal status.
+
+    v0.3 PR 2 / doctrine P4: refuses to begin a streaming call while
+    the coordinator lock is held — an LLM proxy iteration is the
+    canonical long-running operation that must not block the whole
+    room. The assertion fails loudly so a regression surfaces at the
+    call site rather than as a mysterious deadlock or latency cliff.
     """
+    coordinator._assert_not_holding_lock("streaming.run_streaming_call")
     bus.post(
         ev.stream_start(
             lease_id=lease.id,
@@ -184,6 +191,11 @@ def run_streaming_call(
     try:
         for chunk in proxy.stream(prompt):
             cost_tokens += _estimate_tokens(chunk)
+            # v0.3 PR 12 (closes audit D2): record stream activity so
+            # the coordinator's streaming-stall watchdog can tell live
+            # from stuck. ``on_stream_chunk`` is a cheap dict write
+            # under the coord lock — not an I/O entry point.
+            coordinator.on_stream_chunk(lease)
             if not coordinator.validate_lease(lease):
                 status = "lease_expired"
                 _try_cancel(proxy)

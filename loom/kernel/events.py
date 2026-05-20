@@ -67,6 +67,64 @@ _VALID_KINDS = frozenset(
 )
 
 
+# v0.3 PR 8 / doctrine P2 / §4 — three event planes.
+#
+# - CONVERSATION: chat content; pure exchange, no side effects.
+# - CONTROL: kernel-state mutations (slot setters, capabilities,
+#   budget, leases, control actions).
+# - EXECUTION: external-world effects (tool calls, sandbox lifecycle;
+#   v0.4+).
+#
+# The three planes share the bus + journal; the distinction is in
+# *taxonomy + replay treatment*, not in transport.
+
+from enum import Enum as _Enum  # noqa: E402
+
+
+class EventPlane(str, _Enum):
+    CONVERSATION = "conversation"
+    CONTROL = "control"
+    EXECUTION = "execution"
+
+
+# Mapping from ``Event.kind`` to its plane. ``control`` events are
+# ambiguous at the kind level — they span both CONTROL and EXECUTION
+# planes; the per-control_type table below disambiguates.
+_KIND_TO_PLANE: dict[str, EventPlane] = {
+    "chat": EventPlane.CONVERSATION,
+    "stream": EventPlane.CONVERSATION,
+    "system": EventPlane.CONVERSATION,
+    "topic": EventPlane.CONVERSATION,
+    "summary": EventPlane.CONVERSATION,
+    "presence": EventPlane.CONVERSATION,
+    "control": EventPlane.CONTROL,  # default; per-control_type below may shift
+}
+
+
+# Per-control_type plane override. The default (CONTROL) is correct
+# for every control event Loom emits today; v0.4 tool events will
+# populate the EXECUTION entries.
+_CONTROL_TYPE_TO_PLANE: dict[str, EventPlane] = {
+    # v0.4+ tool_call_proposed / tool_result land in EXECUTION.
+}
+
+
+def plane_of(event: "Event") -> EventPlane:
+    """Return the :class:`EventPlane` for ``event``.
+
+    For control events, consults the per-control_type table first
+    (so v0.4 tool events drop into EXECUTION without re-checking the
+    kind-level default). Falls back to ``_KIND_TO_PLANE``.
+    """
+    if event.kind == "control":
+        ct = event.body.get("control_type") if isinstance(event.body, dict) else None
+        if isinstance(ct, str):
+            plane = _CONTROL_TYPE_TO_PLANE.get(ct)
+            if plane is not None:
+                return plane
+    return _KIND_TO_PLANE.get(event.kind, EventPlane.CONTROL)
+
+
 from loom.errors import LoomError  # noqa: E402  (kept here to avoid circular import at module-load)
 
 
@@ -306,6 +364,45 @@ class Event:
     # an NTP step does not warp those windows. Don't compare ``ts``
     # against ``time.monotonic`` values.
     ts: float = 0.0  # epoch seconds; assigned by bus
+    # v0.2.1 envelope additions (PR 3 of the hardening audit). Both
+    # default-initialise to v1 / empty, and both default-apply when a
+    # v0.2.0-shaped journal line is read back via ``from_jsonl`` (the
+    # old lines lack these keys). Old journals load cleanly.
+    schema_version: int = 1
+    # v0.3 PR 4 (doctrine P11): typed causal graph. v0.2.1 reserved the
+    # slot as an untyped tuple; v0.3 tightens to ``tuple[CausalRef,
+    # ...]`` and coerces JSON-loaded list-of-dicts into the typed form
+    # via :func:`loom.kernel.causality.coerce_causal_refs` in
+    # ``__post_init__``. Empty by default; populated by the kernel call
+    # sites that have a meaningful predicate (stream_* + control_action_*
+    # land in PRs 4 / 8 / 9). Old v0.2.0 / v0.2.1 lines load as ``()``.
+    causal_refs: tuple = ()
+    # v0.3 PR 4 (doctrine P12): trace metadata on every event. ``None``
+    # by default — the coordinator stamps a :class:`TraceContext` on
+    # events posted under a held lease. Old journal lines without the
+    # key load as ``None``.
+    trace: Optional[Any] = None
+    # v0.3.x PR 1 (doctrine P21): thread membership as a first-class
+    # envelope field. Every event belongs to exactly one logical
+    # thread; ``"main"`` is the default for the room-level thread.
+    # Leases inherit ``thread_id`` from their ``LeaseContext`` and
+    # the coordinator's ``_emit_under_lease`` helper propagates it
+    # onto the emitted event. Old journal lines without the key load
+    # as ``"main"``.
+    thread_id: str = "main"
+
+    def __post_init__(self) -> None:
+        # JSON has no tuple type, so a round-trip through ``from_jsonl``
+        # surfaces ``causal_refs`` as a list. The v0.3 coercer accepts
+        # already-typed input AND list[dict]; the result is always
+        # ``tuple[CausalRef, ...]`` so ``from_jsonl(to_jsonl(e)) == e``
+        # holds bit-stably.
+        from loom.kernel.causality import coerce_causal_refs, coerce_trace
+
+        self.causal_refs = coerce_causal_refs(self.causal_refs)
+        # ``trace`` accepts dict (just-loaded JSON), already-typed
+        # TraceContext (kernel-emitted), or None (legacy).
+        self.trace = coerce_trace(self.trace)
 
     def to_jsonl(self) -> str:
         # Direct field-access dict construction (avoids ``asdict``'s
@@ -323,6 +420,10 @@ class Event:
             "meta": self.meta,
             "id": self.id,
             "ts": self.ts,
+            "schema_version": self.schema_version,
+            "causal_refs": [r.to_jsonable() for r in self.causal_refs],
+            "trace": self.trace.to_jsonable() if self.trace is not None else None,
+            "thread_id": self.thread_id,
         }
         if _orjson is not None:
             return _orjson.dumps(d).decode("utf-8")
@@ -371,6 +472,10 @@ _EVENT_FIELDS = frozenset(
         "meta",
         "id",
         "ts",
+        "schema_version",
+        "causal_refs",
+        "trace",  # v0.3 PR 4 (doctrine P12).
+        "thread_id",  # v0.3.x PR 1 (doctrine P21).
     }
 )
 
@@ -401,6 +506,16 @@ def _validate_body_for_kind(kind: str, body: Any) -> None:
         ct = body.get("control_type")
         if not isinstance(ct, str) or not ct:
             raise EventShapeError("control body must contain a non-empty 'control_type' string")
+        # v0.2.1 PR 2 (audit C4 partial): per-control-type payload
+        # validation. ``_CONTROL_PAYLOAD_VALIDATORS`` is seeded for the
+        # two policy events promoted in PR 2; v0.3 will populate the
+        # full registry per doctrine P7 (versioned semantic effects).
+        # Control types without an entry pass through unchanged so this
+        # validator can be extended incrementally without breaking
+        # journals.
+        validator = _CONTROL_PAYLOAD_VALIDATORS.get(ct)
+        if validator is not None:
+            validator(body)
         return
     if kind == "stream":
         if not isinstance(body, dict):
@@ -415,6 +530,230 @@ def _validate_body_for_kind(kind: str, body: Any) -> None:
         return
     # ``presence`` is intentionally permissive — its shape is unspecified
     # in v0 and no consumer reads its body today.
+
+
+def _validate_policy_slow(body: dict) -> None:
+    if not _is_number(body.get("elapsed_ms")):
+        raise EventShapeError("policy_slow body must have number 'elapsed_ms'")
+    if not _is_number(body.get("threshold_ms")):
+        raise EventShapeError("policy_slow body must have number 'threshold_ms'")
+    if not _is_int(body.get("user_event_id")):
+        raise EventShapeError("policy_slow body must have int 'user_event_id'")
+
+
+def _validate_policy_error(body: dict) -> None:
+    ec = body.get("exception_class")
+    if not isinstance(ec, str) or not ec:
+        raise EventShapeError(
+            "policy_error body must have non-empty str 'exception_class'"
+        )
+    msg = body.get("message")
+    if not isinstance(msg, str):
+        raise EventShapeError("policy_error body must have str 'message'")
+    if not _is_number(body.get("elapsed_ms")):
+        raise EventShapeError("policy_error body must have number 'elapsed_ms'")
+    if not _is_int(body.get("user_event_id")):
+        raise EventShapeError("policy_error body must have int 'user_event_id'")
+
+
+# Per-(control_type) payload validators. v0.2.1 PR 2 (audit C4 partial)
+# seeds the table for the two policy events; v0.3 will populate the
+# full registry per doctrine P7. Control types not listed here pass
+# through the kind-level validator unchanged.
+def _validate_capability_granted(body: dict) -> None:
+    for k in ("grant_id", "grantor_id", "grantee_id", "capability"):
+        v = body.get(k)
+        if not isinstance(v, str) or not v:
+            raise EventShapeError(
+                f"capability_granted body must have non-empty str {k!r}"
+            )
+    if not _is_int(body.get("source_event_id")):
+        raise EventShapeError("capability_granted body must have int 'source_event_id'")
+    ea = body.get("expires_at")
+    if ea is not None and not _is_number(ea):
+        raise EventShapeError("capability_granted body 'expires_at' must be number or null")
+
+
+def _validate_capability_revoked(body: dict) -> None:
+    gid = body.get("grant_id")
+    if not isinstance(gid, str) or not gid:
+        raise EventShapeError("capability_revoked body must have non-empty str 'grant_id'")
+    rid = body.get("revoker_id")
+    if not isinstance(rid, str) or not rid:
+        raise EventShapeError("capability_revoked body must have non-empty str 'revoker_id'")
+
+
+def _validate_capability_expired(body: dict) -> None:
+    gid = body.get("grant_id")
+    if not isinstance(gid, str) or not gid:
+        raise EventShapeError("capability_expired body must have non-empty str 'grant_id'")
+
+
+def _validate_budget_reserved(body: dict) -> None:
+    if not _is_int(body.get("lease_id")):
+        raise EventShapeError("budget_reserved body must have int 'lease_id'")
+    if not _is_number(body.get("amount")):
+        raise EventShapeError("budget_reserved body must have number 'amount'")
+
+
+def _validate_budget_committed(body: dict) -> None:
+    if not _is_int(body.get("lease_id")):
+        raise EventShapeError("budget_committed body must have int 'lease_id'")
+    if not _is_number(body.get("actual")):
+        raise EventShapeError("budget_committed body must have number 'actual'")
+
+
+def _validate_budget_refunded(body: dict) -> None:
+    if not _is_int(body.get("lease_id")):
+        raise EventShapeError("budget_refunded body must have int 'lease_id'")
+    if not _is_number(body.get("amount")):
+        raise EventShapeError("budget_refunded body must have number 'amount'")
+    if not isinstance(body.get("reason"), str):
+        raise EventShapeError("budget_refunded body must have str 'reason'")
+
+
+def _validate_control_action_proposed(body: dict) -> None:
+    for k in ("action_name", "proposer_id"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"control_action_proposed body must have non-empty str {k!r}"
+            )
+
+
+def _validate_control_action_applied(body: dict) -> None:
+    for k in ("action_name", "applier_id"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"control_action_applied body must have non-empty str {k!r}"
+            )
+
+
+def _validate_control_action_denied(body: dict) -> None:
+    for k in ("action_name", "proposer_id", "reason"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"control_action_denied body must have non-empty str {k!r}"
+            )
+
+
+def _validate_lease_closed(body: dict) -> None:
+    if not _is_int(body.get("lease_id")):
+        raise EventShapeError("lease_closed body must have int 'lease_id'")
+    for k in ("holder", "kind", "reason"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"lease_closed body must have non-empty str {k!r}"
+            )
+
+
+def _validate_stream_stalled(body: dict) -> None:
+    if not _is_int(body.get("lease_id")):
+        raise EventShapeError("stream_stalled body must have int 'lease_id'")
+    if not isinstance(body.get("holder"), str) or not body["holder"]:
+        raise EventShapeError("stream_stalled body must have non-empty str 'holder'")
+    if not _is_number(body.get("seconds_silent")):
+        raise EventShapeError("stream_stalled body must have number 'seconds_silent'")
+
+
+def _validate_summary_proposed(body: dict) -> None:
+    for k in ("summary_id", "summarizer_id"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"summary_proposed body must have non-empty str {k!r}"
+            )
+    scope = body.get("scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
+        raise EventShapeError(
+            "summary_proposed body must have dict 'scope' with str 'room_id'"
+        )
+    cer = body.get("covers_event_range")
+    if not (
+        isinstance(cer, list)
+        and len(cer) == 2
+        and _is_int(cer[0])
+        and _is_int(cer[1])
+    ):
+        raise EventShapeError(
+            "summary_proposed body must have list[int, int] 'covers_event_range'"
+        )
+
+
+def _validate_summary_committed(body: dict) -> None:
+    _validate_summary_proposed(body)
+    if not _is_int(body.get("committed_at_event_id", 0)):
+        raise EventShapeError(
+            "summary_committed body must have int 'committed_at_event_id'"
+        )
+
+
+def _validate_summary_failed(body: dict) -> None:
+    for k in ("proposed_summary_id", "reason"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"summary_failed body must have non-empty str {k!r}"
+            )
+    scope = body.get("scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
+        raise EventShapeError(
+            "summary_failed body must have dict 'scope' with str 'room_id'"
+        )
+
+
+def _validate_summarization_scheduled(body: dict) -> None:
+    if not _is_int(body.get("lease_id")):
+        raise EventShapeError("summarization_scheduled body must have int 'lease_id'")
+    if not isinstance(body.get("summarizer_id"), str) or not body["summarizer_id"]:
+        raise EventShapeError(
+            "summarization_scheduled body must have non-empty str 'summarizer_id'"
+        )
+    scope = body.get("scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
+        raise EventShapeError(
+            "summarization_scheduled body must have dict 'scope' with str 'room_id'"
+        )
+
+
+def _validate_compaction_disabled(body: dict) -> None:
+    for k in ("summarizer_id", "reason"):
+        if not isinstance(body.get(k), str) or not body[k]:
+            raise EventShapeError(
+                f"compaction_disabled body must have non-empty str {k!r}"
+            )
+    if not _is_int(body.get("failure_count")):
+        raise EventShapeError("compaction_disabled body must have int 'failure_count'")
+    scope = body.get("scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
+        raise EventShapeError(
+            "compaction_disabled body must have dict 'scope' with str 'room_id'"
+        )
+
+
+_CONTROL_PAYLOAD_VALIDATORS: dict = {
+    "policy_slow": _validate_policy_slow,
+    "policy_error": _validate_policy_error,
+    # v0.3 PR 5 — capability ledger lifecycle (doctrine §6).
+    "capability_granted": _validate_capability_granted,
+    "capability_revoked": _validate_capability_revoked,
+    "capability_expired": _validate_capability_expired,
+    # v0.3 PR 6 — budget ledger three-way accounting (doctrine §9).
+    "budget_reserved": _validate_budget_reserved,
+    "budget_committed": _validate_budget_committed,
+    "budget_refunded": _validate_budget_refunded,
+    # v0.3 PR 8 — control-plane action lifecycle (doctrine P2 / §4).
+    "control_action_proposed": _validate_control_action_proposed,
+    "control_action_applied": _validate_control_action_applied,
+    "control_action_denied": _validate_control_action_denied,
+    "lease_closed": _validate_lease_closed,
+    # v0.3 PR 12 — streaming-stall watchdog (closes audit D2).
+    "stream_stalled": _validate_stream_stalled,
+    # v0.3.x PR 3 — view-layer compaction lifecycle.
+    "summary_proposed": _validate_summary_proposed,
+    "summary_committed": _validate_summary_committed,
+    "summary_failed": _validate_summary_failed,
+    # v0.3.x PR 5 — Path A scheduling + per-scope disablement.
+    "summarization_scheduled": _validate_summarization_scheduled,
+    "compaction_disabled": _validate_compaction_disabled,
+}
 
 
 def _validate_event_dict(d: Any) -> None:
@@ -464,6 +803,37 @@ def _validate_event_dict(d: Any) -> None:
 
     if not _is_number(d.get("ts", 0.0)):
         raise EventShapeError("ts must be a number")
+
+    # v0.2.1 envelope additions: missing keys are accepted (old
+    # v0.2.0 journal lines lack them); present keys must satisfy
+    # the declared shape.
+    if "schema_version" in d:
+        sv = d["schema_version"]
+        if not _is_int(sv) or sv < 1:
+            raise EventShapeError("schema_version must be a positive int")
+    if "causal_refs" in d:
+        cr = d["causal_refs"]
+        if not isinstance(cr, list):
+            raise EventShapeError(
+                f"causal_refs must be a list, got {type(cr).__name__}"
+            )
+    # v0.3 PR 4 envelope addition (doctrine P12). ``trace`` is dict
+    # or null; absent means "no trace context" (legacy lines). The
+    # full structural check (trace_id / span_id non-empty) lives in
+    # :meth:`TraceContext.from_jsonable`, exercised by
+    # :meth:`Event.__post_init__`.
+    if "trace" in d:
+        tr = d["trace"]
+        if tr is not None and not isinstance(tr, dict):
+            raise EventShapeError(
+                f"trace must be a dict or null, got {type(tr).__name__}"
+            )
+    # v0.3.x PR 1 (doctrine P21): thread_id is a non-empty str. Absent
+    # in legacy lines → loads as default "main" via Event(...).
+    if "thread_id" in d:
+        tid = d["thread_id"]
+        if not isinstance(tid, str) or not tid:
+            raise EventShapeError("thread_id must be a non-empty string")
 
     _validate_body_for_kind(kind, d.get("body"))
 
@@ -530,6 +900,51 @@ CONTROL_TYPES = frozenset(
         # ``deny_reason`` (short structured string), and
         # ``trigger_event_id`` for observability.
         "lease_denied",
+        # Proactive lease TTL expiry (v0.2.1 PR 1, audit finding D1).
+        # Emitted by the coordinator watchdog when it discovers a lease
+        # whose ``expires_at`` has passed. Distinct from the ``stream_end``
+        # body status ``"lease_expired"`` (control plane vs stream
+        # plane — see audit §11 Q2).
+        "lease_expired",
+        # v0.3 PR 5 (doctrine §6). Capability ledger lifecycle.
+        "capability_granted",
+        "capability_revoked",
+        "capability_expired",
+        # v0.3 PR 6 (doctrine §9). Budget ledger three-way accounting.
+        "budget_reserved",
+        "budget_committed",
+        "budget_refunded",
+        # v0.3 PR 8 (doctrine P2 / §4). Control-plane action lifecycle.
+        "control_action_proposed",
+        "control_action_applied",
+        "control_action_denied",
+        # v0.3 PR 8 — unified lease termination event. Replaces
+        # ``lease_denied`` and ``lease_expired`` for go-forward emit.
+        # The legacy two are kept loadable for v0.2.x journal replay
+        # but the coordinator emits ``lease_closed`` alongside them
+        # (post-v0.3 release-cut drops the duplicates).
+        "lease_closed",
+        # v0.3 PR 12 (closes audit D2): streaming-stall watchdog
+        # observability. Emitted when a USER_TURN lease's stream has
+        # produced no chunks for ``RoomConfig.stream_stall_threshold_s``
+        # seconds; coordinator follows with ``lease_closed(reason=aborted)``
+        # so the lease is released.
+        "stream_stalled",
+        # v0.3.x PR 3 (doctrine P18 / §3 / §6). View-layer compaction
+        # lifecycle. ``summary_proposed`` records the candidate;
+        # ``summary_committed`` records the successful structural
+        # validation + state advance; ``summary_failed`` records a
+        # rejected candidate with the structural failure reason.
+        # Together these are the *only* source of truth replay uses to
+        # rebuild ``ContextState``; the validator is NEVER re-run on
+        # replay.
+        "summary_proposed",
+        "summary_committed",
+        "summary_failed",
+        # v0.3.x PR 5 (doctrine P22 / §7). Path A audit event +
+        # per-scope backoff/disablement event.
+        "summarization_scheduled",
+        "compaction_disabled",
     }
 )
 
@@ -689,6 +1104,304 @@ def style_changed(old: str, new: str) -> Event:
     return _control("style_changed", old=old, new=new)
 
 
+def policy_slow(*, elapsed_ms: float, threshold_ms: float, user_event_id: int) -> Event:
+    """Emit when a policy's ``classify_fn`` exceeded the slow-threshold (v0.2.1).
+
+    Promoted from an inline ``_control(...)`` call at
+    ``coordinator.py:854`` to a typed constructor as part of the
+    v0.2.1 hardening audit (PR 2, finding C2). Pure observability —
+    Python cannot safely interrupt arbitrary code so the call still
+    completes; this event surfaces the slowness.
+
+    Fields:
+    - ``elapsed_ms``: measured wall-time of the policy call (rounded).
+    - ``threshold_ms``: the configured threshold that was exceeded
+      (currently the kernel constant ``_POLICY_SLOW_THRESHOLD_MS``;
+      v0.3 will move it to ``RoomConfig`` per audit D3).
+    - ``user_event_id``: the bus id of the user event being classified,
+      for correlation in the journal.
+    """
+    return _control(
+        "policy_slow",
+        elapsed_ms=round(float(elapsed_ms), 3),
+        threshold_ms=round(float(threshold_ms), 3),
+        user_event_id=int(user_event_id),
+    )
+
+
+def policy_error(
+    *,
+    exception_class: str,
+    message: str,
+    elapsed_ms: float,
+    user_event_id: int,
+) -> Event:
+    """Emit when a policy's ``classify_fn`` raised (v0.2.1).
+
+    Promoted from an inline ``_control(...)`` call at
+    ``coordinator.py:824`` to a typed constructor as part of the
+    v0.2.1 hardening audit (PR 2, finding C2). The coordinator then
+    dispatches on ``policy_error_mode`` (``close_turn`` /
+    ``default_responder`` / ``raise``).
+
+    ``message`` is run through :func:`redact_error_text` at the
+    kernel boundary so policy exception text (which can include
+    request payloads, prompt fragments, or secret strings depending
+    on the policy implementation) cannot reach the journal verbatim.
+    Matches the scrubbing discipline of :func:`actor_error` and
+    :func:`journal_error`.
+    """
+    return _control(
+        "policy_error",
+        exception_class=exception_class,
+        message=redact_error_text(message),
+        elapsed_ms=round(float(elapsed_ms), 3),
+        user_event_id=int(user_event_id),
+    )
+
+
+def lease_expired(*, holder: str, lease_id: int, trigger_event_id: int) -> Event:
+    """Emit when the coordinator watchdog reaps an unattended lease (v0.2.1).
+
+    Distinct from the ``stream_end.body["status"] == "lease_expired"``
+    signal, which marks "this stream's terminal disposition was that
+    the lease ran out mid-stream". The control event here marks
+    "the watchdog discovered an idle lease past TTL and reaped it";
+    there may be no associated stream lifecycle. See audit §11 Q2.
+
+    Sender is always ``"system"``; emitted under ``post_internal``.
+    """
+    return _control(
+        "lease_expired",
+        holder=holder,
+        lease_id=int(lease_id),
+        trigger_event_id=int(trigger_event_id),
+    )
+
+
+def capability_granted(
+    *,
+    grant_id: str,
+    grantor_id: str,
+    grantee_id: str,
+    capability: str,
+    expires_at: Optional[float] = None,
+    source_event_id: int,
+) -> Event:
+    """v0.3 PR 5 / doctrine §6 — capability grant emitted to the journal.
+
+    Always sender ``"system"`` (under ``post_internal``). The
+    coordinator constructs and emits one of these per
+    ``CapabilityGrantedEffect`` it applies; ``grant_id`` is the
+    ledger key that future ``capability_revoked`` /
+    ``capability_expired`` events reference. ``expires_at`` is a
+    ``time.monotonic`` value (or ``None`` for non-expiring grants).
+    """
+    return _control(
+        "capability_granted",
+        grant_id=str(grant_id),
+        grantor_id=str(grantor_id),
+        grantee_id=str(grantee_id),
+        capability=str(capability),
+        expires_at=expires_at,
+        source_event_id=int(source_event_id),
+    )
+
+
+def capability_revoked(*, grant_id: str, revoker_id: str, reason: str = "revoked") -> Event:
+    """v0.3 PR 5 / doctrine §6 — capability revocation."""
+    return _control(
+        "capability_revoked",
+        grant_id=str(grant_id),
+        revoker_id=str(revoker_id),
+        reason=str(reason),
+    )
+
+
+def capability_expired(*, grant_id: str) -> Event:
+    """v0.3 PR 5 / doctrine §6 — TTL-based capability expiry, emitted by watchdog."""
+    return _control("capability_expired", grant_id=str(grant_id))
+
+
+def budget_reserved(*, lease_id: int, amount: float, scope: Optional[dict] = None) -> Event:
+    """v0.3 PR 6 / doctrine §9 — budget reservation against a lease.
+
+    ``scope`` round-trips as a dict (the dimensional key); the
+    reducer reconstructs a :class:`BudgetScope` from it. ``None``
+    means the room-level no-narrowing scope.
+    """
+    return _control(
+        "budget_reserved",
+        lease_id=int(lease_id),
+        amount=float(amount),
+        scope=dict(scope) if scope else {},
+    )
+
+
+def budget_committed(*, lease_id: int, actual: float, scope: Optional[dict] = None) -> Event:
+    """v0.3 PR 6 / doctrine §9 — commit actual cost against an outstanding reservation."""
+    return _control(
+        "budget_committed",
+        lease_id=int(lease_id),
+        actual=float(actual),
+        scope=dict(scope) if scope else {},
+    )
+
+
+def control_action_proposed(
+    *,
+    action_name: str,
+    proposer_id: str,
+    params: Optional[dict] = None,
+    target_event_id: Optional[int] = None,
+) -> Event:
+    """v0.3 PR 8 / doctrine P2 / §4 — control-action proposal entered the kernel.
+
+    Sender ``"system"`` (via ``post_internal``). The proposer's id is
+    in the body, distinct from the kernel's sender field so the
+    journal carries both: who *asked* and who *journaled*.
+    """
+    body: dict = {
+        "action_name": str(action_name),
+        "proposer_id": str(proposer_id),
+        "params": dict(params or {}),
+    }
+    if target_event_id is not None:
+        body["target_event_id"] = int(target_event_id)
+    return _control("control_action_proposed", **body)
+
+
+def control_action_applied(
+    *,
+    action_name: str,
+    applier_id: str,
+    effects: Optional[list] = None,
+    applied_at_event_id: Optional[int] = None,
+) -> Event:
+    """v0.3 PR 8 / doctrine P2 / §4 — control-action effects were applied.
+
+    ``effects`` is a list of `{effect_type, schema_version, ...}`
+    dicts describing what the registered reducers produced; the
+    coordinator's apply path records them so the journal carries
+    enough detail to reconstruct state during replay even after a
+    reducer-version bump.
+    """
+    body: dict = {
+        "action_name": str(action_name),
+        "applier_id": str(applier_id),
+        "effects": list(effects or []),
+    }
+    if applied_at_event_id is not None:
+        body["applied_at_event_id"] = int(applied_at_event_id)
+    return _control("control_action_applied", **body)
+
+
+def control_action_denied(
+    *,
+    action_name: str,
+    proposer_id: str,
+    reason: str,
+    check_name: Optional[str] = None,
+) -> Event:
+    """v0.3 PR 8 / doctrine P2 / §4 — control-action proposal rejected.
+
+    ``reason`` is a short structured string from the
+    :class:`DenialReason` enum (PR 9 — INSUFFICIENT_CAPABILITY /
+    INVALID_PARAMS / etc.); ``check_name`` is the failing lease
+    check when the denial happened during lease acquisition.
+    """
+    body: dict = {
+        "action_name": str(action_name),
+        "proposer_id": str(proposer_id),
+        "reason": str(reason),
+    }
+    if check_name:
+        body["check_name"] = str(check_name)
+    return _control("control_action_denied", **body)
+
+
+def stream_stalled(
+    *,
+    lease_id: int,
+    holder: str,
+    seconds_silent: float,
+) -> Event:
+    """v0.3 PR 12 / audit D2 — streaming-stall watchdog observability.
+
+    Emitted when a USER_TURN lease's stream has been silent (no
+    chunks) for ``RoomConfig.stream_stall_threshold_s`` seconds while
+    the lease was still nominally valid. The coordinator follows
+    with a ``lease_closed(reason="aborted")`` so the lease releases
+    and the room can move on.
+
+    Distinct from the v0.2.1 ``lease_expired`` event (which fires on
+    TTL, not on silence): a stall can happen well before the TTL when
+    a remote provider hangs partway through a stream.
+    """
+    return _control(
+        "stream_stalled",
+        lease_id=int(lease_id),
+        holder=str(holder),
+        seconds_silent=float(seconds_silent),
+    )
+
+
+def lease_closed(
+    *,
+    lease_id: int,
+    holder: str,
+    kind: str,
+    reason: str,
+    span_id: Optional[str] = None,
+) -> Event:
+    """v0.3 PR 8 / doctrine P2 / §4 — unified lease termination event.
+
+    Replaces the v0.2 split between ``lease_denied`` and
+    ``lease_expired``. ``reason`` admits the broader vocabulary:
+
+    - ``released`` — clean release after successful work.
+    - ``denied`` — failed a check at acquire time.
+    - ``expired`` — TTL exceeded; reaped by watchdog.
+    - ``cancelled`` — explicit cancel (revoke / participant removed /
+      room shutdown).
+    - ``aborted`` — runtime abort (exception, fail-closed).
+    - ``aborted_validation`` — post-LLM validation suppressed; partial
+      commit + refund (see :meth:`BudgetLedger.partial_commit_and_refund`).
+
+    ``kind`` is the :class:`LeaseKind` value of the closed lease.
+    ``span_id`` (when present) is the lease's trace span (PR 4) for
+    observability correlation.
+
+    For one v0.3.x release the coordinator continues to emit the
+    legacy ``lease_denied`` / ``lease_expired`` events alongside
+    ``lease_closed`` so v0.2-era consumers and tests don't break.
+    """
+    body: dict = {
+        "lease_id": int(lease_id),
+        "holder": str(holder),
+        "kind": str(kind),
+        "reason": str(reason),
+    }
+    if span_id is not None:
+        body["span_id"] = str(span_id)
+    return _control("lease_closed", **body)
+
+
+def budget_refunded(*, lease_id: int, amount: float, reason: str, scope: Optional[dict] = None) -> Event:
+    """v0.3 PR 6 / doctrine §9 — refund a reservation.
+
+    ``reason`` is a short structured string mirroring the lease
+    termination reason (``denied`` / ``expired`` / ``cancelled``).
+    """
+    return _control(
+        "budget_refunded",
+        lease_id=int(lease_id),
+        amount=float(amount),
+        reason=str(reason),
+        scope=dict(scope) if scope else {},
+    )
+
+
 def lease_denied(*, holder: str, check_name: str, deny_reason: str, trigger_event_id: int) -> Event:
     """Emit when an :meth:`acquire_lease` request is rejected.
 
@@ -736,6 +1449,207 @@ def actor_error(participant_id: str, exception_class: str, message: str) -> Even
         exception_class=exception_class,
         message=redact_error_text(message),
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.3.x PR 3 — view-layer compaction lifecycle (doctrine P18 / §3 / §6)
+# ---------------------------------------------------------------------------
+
+
+def _scope_payload(scope: Any) -> dict:
+    """Coerce a :class:`loom.kernel.context.ContextScope` (or a plain
+    dict in the same shape) into the JSON-able sub-dict used on
+    compaction event bodies.
+    """
+    if isinstance(scope, dict):
+        room_id = scope.get("room_id", "")
+        thread_id = scope.get("thread_id", "main")
+        actor_id = scope.get("actor_id")
+    else:
+        room_id = getattr(scope, "room_id", "")
+        thread_id = getattr(scope, "thread_id", "main")
+        actor_id = getattr(scope, "actor_id", None)
+    return {
+        "room_id": str(room_id),
+        "thread_id": str(thread_id),
+        "actor_id": actor_id if actor_id is None else str(actor_id),
+    }
+
+
+def summary_proposed(
+    *,
+    summary_id: str,
+    scope: Any,
+    covers_event_range: tuple,
+    proposed_text: str,
+    retained_event_ids: tuple = (),
+    input_summary_ids: tuple = (),
+    input_event_ranges: tuple = (),
+    model_id: str = "",
+    prompt_hash: str = "",
+    summarizer_id: str,
+    proposed_at_event_id: int = -1,
+    thread_id: Optional[str] = None,
+) -> Event:
+    """``summary_proposed`` — a candidate compaction record (doctrine §6).
+
+    The body carries the *full* :class:`SummaryRecord` payload so a
+    journal replay can reconstruct the proposal without re-running the
+    summariser. ``thread_id`` defaults to the scope's ``thread_id``;
+    callers running under a lease should leave it ``None`` and rely on
+    the coordinator's :meth:`_emit_under_lease` to stamp it.
+    """
+    sc = _scope_payload(scope)
+    body: dict = {
+        "summary_id": str(summary_id),
+        "scope": sc,
+        "covers_event_range": list(covers_event_range),
+        "proposed_text": str(proposed_text),
+        "retained_event_ids": list(retained_event_ids),
+        "input_summary_ids": list(input_summary_ids),
+        "input_event_ranges": [list(r) for r in input_event_ranges],
+        "model_id": str(model_id),
+        "prompt_hash": str(prompt_hash),
+        "summarizer_id": str(summarizer_id),
+        "proposed_at_event_id": int(proposed_at_event_id),
+    }
+    ev_obj = _control("summary_proposed", **body)
+    ev_obj.thread_id = thread_id or sc["thread_id"]
+    return ev_obj
+
+
+def summary_committed(
+    *,
+    summary_id: str,
+    scope: Any,
+    covers_event_range: tuple,
+    proposed_text: str,
+    retained_event_ids: tuple = (),
+    input_summary_ids: tuple = (),
+    input_event_ranges: tuple = (),
+    model_id: str = "",
+    prompt_hash: str = "",
+    summarizer_id: str,
+    proposed_at_event_id: int = -1,
+    supersedes_summary_ids: tuple = (),
+    committed_at_event_id: int = -1,
+    thread_id: Optional[str] = None,
+) -> Event:
+    """``summary_committed`` — the structural validator and the under-
+    lock commit step both passed; the record is now part of
+    :class:`ContextState`. Carries the full record + supersession list
+    so replay can rebuild state from the journal alone.
+    """
+    sc = _scope_payload(scope)
+    body: dict = {
+        "summary_id": str(summary_id),
+        "scope": sc,
+        "covers_event_range": list(covers_event_range),
+        "proposed_text": str(proposed_text),
+        "retained_event_ids": list(retained_event_ids),
+        "input_summary_ids": list(input_summary_ids),
+        "input_event_ranges": [list(r) for r in input_event_ranges],
+        "model_id": str(model_id),
+        "prompt_hash": str(prompt_hash),
+        "summarizer_id": str(summarizer_id),
+        "proposed_at_event_id": int(proposed_at_event_id),
+        "supersedes_summary_ids": list(supersedes_summary_ids),
+        "committed_at_event_id": int(committed_at_event_id),
+    }
+    ev_obj = _control("summary_committed", **body)
+    ev_obj.thread_id = thread_id or sc["thread_id"]
+    return ev_obj
+
+
+def summary_failed(
+    *,
+    proposed_summary_id: str,
+    scope: Any,
+    reason: str,
+    details: str = "",
+    failed_validator: str = "structural",
+    summarizer_id: str = "",
+    thread_id: Optional[str] = None,
+) -> Event:
+    """``summary_failed`` — the validator (off-lock or under-lock)
+    rejected the proposal. ``reason`` is a :class:`SummaryFailureReason`
+    value; ``failed_validator`` is ``"structural"`` for the pre-validator
+    and ``"anchor"`` for the under-lock anchor check.
+    """
+    sc = _scope_payload(scope)
+    body: dict = {
+        "proposed_summary_id": str(proposed_summary_id),
+        "scope": sc,
+        "reason": str(reason),
+        "details": str(details),
+        "failed_validator": str(failed_validator),
+        "summarizer_id": str(summarizer_id),
+    }
+    ev_obj = _control("summary_failed", **body)
+    ev_obj.thread_id = thread_id or sc["thread_id"]
+    return ev_obj
+
+
+def summarization_scheduled(
+    *,
+    scope: Any,
+    lease_id: int,
+    summarizer_id: str,
+    trigger_pressure_ratio: float = 0.0,
+    triggered_by: str = "policy",
+    thread_id: Optional[str] = None,
+) -> Event:
+    """v0.3.x PR 5 / doctrine P22 / §7 — Path A audit event.
+
+    Emitted when the policy hook schedules a SUMMARIZATION lease
+    (Path A). Path B (control action) does NOT emit this — it goes
+    through the v0.3 PR 9 control-action lifecycle which already
+    has its own ``control_action_proposed`` / ``_applied`` /
+    ``_denied`` taxonomy.
+    """
+    sc = _scope_payload(scope)
+    body: dict = {
+        "scope": sc,
+        "lease_id": int(lease_id),
+        "summarizer_id": str(summarizer_id),
+        "trigger_pressure_ratio": float(trigger_pressure_ratio),
+        "triggered_by": str(triggered_by),
+    }
+    ev_obj = _control("summarization_scheduled", **body)
+    ev_obj.thread_id = thread_id or sc["thread_id"]
+    return ev_obj
+
+
+def compaction_disabled(
+    *,
+    scope: Any,
+    summarizer_id: str,
+    failure_count: int,
+    reason: str = "consecutive_failures",
+    last_failed_summary_id: str = "",
+    thread_id: Optional[str] = None,
+) -> Event:
+    """v0.3.x PR 5 / doctrine §7 — per-scope backoff.
+
+    Emitted when consecutive structural failures
+    (``summary_failed`` with reason ≠ ANCHOR_CONFLICT) for
+    ``(summarizer_id, scope)`` reach
+    ``RoomConfig.summarizer_max_consecutive_failures``. The
+    coordinator stops scheduling Path A summarisations for this
+    scope until a :class:`DefaultSummarizerSetEffect` resets the
+    counter or the policy explicitly re-enables.
+    """
+    sc = _scope_payload(scope)
+    body: dict = {
+        "scope": sc,
+        "summarizer_id": str(summarizer_id),
+        "failure_count": int(failure_count),
+        "reason": str(reason),
+        "last_failed_summary_id": str(last_failed_summary_id),
+    }
+    ev_obj = _control("compaction_disabled", **body)
+    ev_obj.thread_id = thread_id or sc["thread_id"]
+    return ev_obj
 
 
 def journal_corruption(

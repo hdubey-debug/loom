@@ -4,18 +4,28 @@ A :class:`ParticipantActor` is one daemon thread per participant. On
 each bus wakeup it:
 
 1. Reads new events visible to it (``bus.snapshot(audience=self.id,
-   since=cursor)``), filtering out events it sent.
+   since=cursor)``), filtering out events it sent. The cursor is a
+   single high-water mark: ``bus.snapshot(since=cursor)`` returns
+   events with ``id > cursor``.
 2. Picks the highest-priority trigger from the batch, calls
    :func:`decide` to produce an :class:`AgentDecision`.
-3. Prunes its cursor: events in ``considered_event_ids`` are not
-   reconsidered; direct mentions to self that were NOT selected as the
-   trigger remain pending in a bounded LRU.
-4. Dispatches the decision:
+3. Dispatches the decision:
    - ``SKIP`` → ``coordinator.handle_skip(self.id, trigger)``
    - ``DRAFT`` → ``coordinator.acquire_lease(...)`` then run streaming
      via the configured ``draft_handler`` callback. Streaming is a
      separate module (Section 7) and is supplied here so this module
      stays pure for unit tests.
+4. **On lease denial, re-pend the trigger for replay** (v0.2.1,
+   audit finding A1): the cursor still advances to ``max(snap.id)``
+   to avoid a tight wakeup loop (kernel-emitted ``lease_denied``
+   events keep ``bus.wait_after`` returning), but the denied trigger
+   is added to the bounded LRU ``_pending_direct_mentions`` so the
+   next ``_decide_once`` re-snapshots it via the replay path. A
+   subsequent eligibility change (throttle reset, budget release,
+   speaker cap clear) can then re-pick the trigger. The LRU's prior
+   role (carrying user direct mentions that were considered but not
+   picked) is preserved; it now also carries denied triggers of any
+   priority class.
 
 Trigger priority (highest first):
 
@@ -53,13 +63,13 @@ class AgentDecision:
     - ``action="DRAFT"`` — the actor wants to draft a reply for
       ``trigger_event_id``; the coordinator grants a lease (or denies).
 
-    ``considered_event_ids`` is the actor's "I have processed these,
-    do not redeliver" cursor advance.
+    v0.2.1 (audit finding A2) dropped the previously unused
+    ``considered_event_ids`` field. The actor advances its cursor
+    using the in-hand snapshot, not a hint on the decision.
     """
 
     action: DecisionAction
     trigger_event_id: Optional[int]
-    considered_event_ids: list[int] = field(default_factory=list)
     reason: str = ""
 
 
@@ -184,12 +194,10 @@ def decide(
     classifier. The actor loop forwards
     :attr:`RoomConfig.trigger_priority`.
     """
-    considered = [e.id for e in events]
     if not events or user_turn is None:
         return AgentDecision(
             action="SKIP",
             trigger_event_id=None,
-            considered_event_ids=considered,
             reason="empty batch" if not events else "no open user_turn",
         )
 
@@ -198,7 +206,6 @@ def decide(
         return AgentDecision(
             action="SKIP",
             trigger_event_id=None,
-            considered_event_ids=considered,
             reason="no actionable trigger",
         )
 
@@ -214,27 +221,23 @@ def decide(
         return AgentDecision(
             action="DRAFT",
             trigger_event_id=trigger.id,
-            considered_event_ids=considered,
             reason="direct_mention",
         )
     if is_dead_letter:
         return AgentDecision(
             action="DRAFT",
             trigger_event_id=trigger.id,
-            considered_event_ids=considered,
             reason="dead_letter_rerouted",
         )
     if has_obligation:
         return AgentDecision(
             action="DRAFT",
             trigger_event_id=trigger.id,
-            considered_event_ids=considered,
             reason="obligation",
         )
     return AgentDecision(
         action="SKIP",
         trigger_event_id=trigger.id,
-        considered_event_ids=considered,
         reason="not_eligible",
     )
 
@@ -280,6 +283,16 @@ class ParticipantActor:
         self._stopped = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._pending_direct_mentions: deque[int] = deque(maxlen=pending_mention_capacity)
+        # v0.2.1 (audit A1): triggers whose most recent lease attempt
+        # was denied. ``_decide_once`` short-circuits to SKIP when the
+        # picked trigger is in this set, preventing the tight loop
+        # where re-pending a denied trigger + kernel-emitted
+        # ``lease_denied`` events cause ``wait_after`` to immediately
+        # re-wake the actor. The set is cleared whenever a new
+        # user-posted event arrives (signalling potential eligibility
+        # change); individual entries are dropped on grant or when
+        # the trigger ages out of the replay LRU.
+        self._denied_trigger_ids: set[int] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -324,9 +337,29 @@ class ParticipantActor:
         Useful in tests: the bus, coordinator, and actor can be driven
         without spawning a thread. The production loop simply calls
         :meth:`step` after each ``bus.wait_after`` wakeup.
+
+        v0.2.1 (audit finding A1): the dispatch outcome decides
+        whether the trigger gets re-pended for replay. The cursor
+        itself always advances to ``max(snap.id)`` to avoid the
+        ``lease_denied`` → ``wait_after`` → re-decide tight loop.
         """
-        decision = self._decide_once()
-        self._dispatch_decision(decision)
+        snap, decision = self._decide_once()
+        granted = self._dispatch_decision(decision)
+        self._advance_cursor(snap)
+        if (
+            decision.action == "DRAFT"
+            and decision.trigger_event_id is not None
+        ):
+            if granted:
+                # Successful attempt — clear any stale denial entry.
+                self._denied_trigger_ids.discard(decision.trigger_event_id)
+            else:
+                # Re-pend so the next eligibility-changing event
+                # (a fresh user post — see ``_decide_once``) re-picks
+                # this trigger. Mark it as denied so the actor does
+                # not re-attempt under the same conditions.
+                self._repend_trigger(decision.trigger_event_id)
+                self._denied_trigger_ids.add(decision.trigger_event_id)
         return decision
 
     def _loop(self) -> None:
@@ -374,9 +407,28 @@ class ParticipantActor:
     # Decision pipeline
     # ------------------------------------------------------------------
 
-    def _decide_once(self) -> AgentDecision:
+    def _decide_once(self) -> tuple[list[Event], AgentDecision]:
+        """Compute the decision for one wakeup without advancing the cursor.
+
+        Returns ``(snap, decision)``. The caller (``step``) advances
+        the cursor based on the dispatch outcome — see
+        :meth:`_advance_cursor`. v0.2.1 split the cursor advance off
+        of this method per audit finding A1 so a lease denial cannot
+        lose the trigger event.
+
+        A new user-posted event in ``snap`` clears
+        ``self._denied_trigger_ids`` since it signals possible
+        eligibility change (throttle bucket rolling, budget reset, a
+        new turn opening). If the picked trigger is still in the
+        denied set after that clear, the decision is downgraded to
+        ``SKIP`` so the actor doesn't re-attempt a known-failing
+        trigger and tight-loop on its own ``lease_denied`` emissions.
+        """
         snap = self.bus.snapshot(audience=self.id, since=self._cursor)
         snap = [e for e in snap if e.sender != self.id]
+
+        if any(e.sender == "user" for e in snap):
+            self._denied_trigger_ids.clear()
 
         if self._pending_direct_mentions:
             seen = {e.id for e in snap}
@@ -397,13 +449,48 @@ class ParticipantActor:
         priority_fn = self.coordinator.config.trigger_priority or None
         decision = decide(snap, self.id, self.coordinator.user_turn, priority_fn=priority_fn)
 
-        if snap:
-            highest = max(e.id for e in snap)
-            if highest > self._cursor:
-                self._cursor = highest
+        if (
+            decision.action == "DRAFT"
+            and decision.trigger_event_id in self._denied_trigger_ids
+        ):
+            decision = AgentDecision(
+                action="SKIP",
+                trigger_event_id=None,
+                reason="recently_denied_no_eligibility_change",
+            )
 
         self._update_pending_mentions(decision, snap)
-        return decision
+        return snap, decision
+
+    def _advance_cursor(self, snap: list[Event]) -> None:
+        """Advance ``self._cursor`` to ``max(snap.id)``.
+
+        Cursor advance is unconditional because a stopped cursor
+        combined with a kernel-emitted ``lease_denied`` event would
+        wake the actor immediately via ``bus.wait_after`` and re-run
+        the same denied decision. The trigger-not-lost guarantee is
+        delivered via the replay LRU (see :meth:`_repend_trigger`)
+        rather than via the cursor.
+
+        Monotonic: ``new < self._cursor`` is silently discarded.
+        """
+        if not snap:
+            return
+        highest = max(e.id for e in snap)
+        if highest > self._cursor:
+            self._cursor = highest
+
+    def _repend_trigger(self, trigger_id: int) -> None:
+        """Add ``trigger_id`` to the replay LRU after a lease denial.
+
+        Reuses the existing ``_pending_direct_mentions`` deque (whose
+        replay path in :meth:`_decide_once` lifts pending event ids
+        back into the next snap). The deque is bounded so unbounded
+        re-pending cannot occur; if the same trigger keeps failing
+        eligibility, it cycles out as new mentions arrive.
+        """
+        if trigger_id not in self._pending_direct_mentions:
+            self._pending_direct_mentions.append(trigger_id)
 
     def _update_pending_mentions(self, decision: AgentDecision, considered: list[Event]) -> None:
         # Only user-sourced mentions are actionable in v0; pending-LRU
@@ -424,11 +511,19 @@ class ParticipantActor:
             except ValueError:
                 pass
 
-    def _dispatch_decision(self, decision: AgentDecision) -> None:
+    def _dispatch_decision(self, decision: AgentDecision) -> bool:
+        """Dispatch ``decision`` and return ``True`` iff a lease was granted.
+
+        The bool is consumed by :meth:`_advance_cursor` to decide
+        whether to keep the trigger eligible for re-snapshotting
+        (v0.2.1 audit A1). SKIP decisions always return ``False`` —
+        no lease was requested, so there is no grant outcome and the
+        cursor advances normally.
+        """
         trigger = self._lookup_event(decision.trigger_event_id)
         if decision.action == "SKIP":
             self.coordinator.handle_skip(self.id, trigger)
-            return
+            return False
         # DRAFT. Direct-mention bypass is restricted to user-sourced
         # mentions — agent-to-agent @ goes through the standard
         # allowed_speakers gate so chains close at max_responses.
@@ -445,13 +540,16 @@ class ParticipantActor:
         )
         if lease is None:
             # Speaker cap, throttle, or budget rejected. Fall back to a
-            # SKIP record so the empty-batch path doesn't loop.
+            # SKIP record so the empty-batch path doesn't loop. The
+            # cursor is held at trigger.id - 1 by ``_advance_cursor``
+            # so the next eligibility change re-picks this trigger.
             self.coordinator.handle_skip(self.id, trigger)
-            return
+            return False
         try:
             self.draft_handler(self, trigger, lease)
         finally:
             self.coordinator.release_lease(lease)
+        return True
 
     # ------------------------------------------------------------------
     # Helpers

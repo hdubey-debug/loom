@@ -534,7 +534,7 @@ def test_actor_skip_returns_when_chat_not_addressing_actor():
         from loom.kernel import events as evx
 
         session.bus.post(evx.chat(sender="bob", body="just thinking", addressees=[]))
-        decision = alice._decide_once()
+        _snap, decision = alice._decide_once()
         assert decision.action == "SKIP"
     finally:
         session.stop()
