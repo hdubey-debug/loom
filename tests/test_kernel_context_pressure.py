@@ -176,9 +176,7 @@ class SelectCompactionRange(unittest.TestCase):
         )
         st.summaries["s1"] = rec
         st.active_summary_by_scope[scope] = "s1"
-        lo, hi = select_compaction_range(
-            st, scope, bus_length=100, min_events=10
-        )
+        lo, hi = select_compaction_range(st, scope, bus_length=100, min_events=10)
         # 96..99 = 4 events, below threshold 10 → degenerate
         self.assertLess(hi, lo)
 

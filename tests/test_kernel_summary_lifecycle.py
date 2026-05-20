@@ -27,12 +27,10 @@ from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.context import (
     ContextScope,
-    ContextState,
     SummaryFailureReason,
     SummaryRecord,
-    new_context_state,
 )
-from loom.kernel.coordinator import RoomCoordinator, SummaryCommitResult
+from loom.kernel.coordinator import RoomCoordinator
 from loom.kernel.effects import (
     SummaryCommittedEffect,
     SummaryFailedEffect,
@@ -138,9 +136,7 @@ class SummaryReducers(unittest.TestCase):
         rec = _rec()
         reg.apply(state, SummaryCommittedEffect(record=rec))
         self.assertIn(rec.summary_id, state.context.summaries)
-        self.assertEqual(
-            state.context.active_summary_by_scope[rec.scope], rec.summary_id
-        )
+        self.assertEqual(state.context.active_summary_by_scope[rec.scope], rec.summary_id)
 
     def test_committed_reducer_adds_supersession_edge(self):
         reg = build_kernel_registry()
@@ -208,13 +204,9 @@ class SubmitSummaryProposedHappyPath(unittest.TestCase):
         coord.submit_summary_proposed(_rec())
         after = coord.bus.snapshot()
         new_kinds = [
-            ev.control_type_of(e)
-            for e in after[before:]
-            if ev.control_type_of(e) is not None
+            ev.control_type_of(e) for e in after[before:] if ev.control_type_of(e) is not None
         ]
-        self.assertEqual(
-            new_kinds, ["summary_proposed", "summary_committed"]
-        )
+        self.assertEqual(new_kinds, ["summary_proposed", "summary_committed"])
 
     def test_result_carries_committed_at_event_id(self):
         coord = _coord_with_events(12)
@@ -243,9 +235,7 @@ class SubmitSummaryProposedFailure(unittest.TestCase):
         coord = _coord_with_events(5)
         before = len(coord.bus.snapshot())
         coord.submit_summary_proposed(_rec())
-        emitted = [
-            ev.control_type_of(e) for e in coord.bus.snapshot()[before:]
-        ]
+        emitted = [ev.control_type_of(e) for e in coord.bus.snapshot()[before:]]
         self.assertNotIn("summary_committed", emitted)
         self.assertIn("summary_failed", emitted)
 
@@ -288,9 +278,7 @@ class SubmitSummaryProposedAnchorConflict(unittest.TestCase):
         # Pre-validator passed; only the under-lock anchor check
         # rejected. ANCHOR_CONFLICT is explicitly skipped by the
         # failed-reducer.
-        self.assertEqual(
-            coord.kernel_state.context.failure_count.get(key, 0), 0
-        )
+        self.assertEqual(coord.kernel_state.context.failure_count.get(key, 0), 0)
 
 
 class SubmitSummaryProposedRollingCompaction(unittest.TestCase):

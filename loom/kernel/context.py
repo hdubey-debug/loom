@@ -302,9 +302,7 @@ def validate_summary_record(
     :func:`validate_lineage`. Pure: no I/O, no lock, deterministic in
     its three arguments.
     """
-    ok, reason, detail = validate_lineage(
-        record, input_summary_lookup=input_summary_lookup
-    )
+    ok, reason, detail = validate_lineage(record, input_summary_lookup=input_summary_lookup)
     if not ok:
         return (ok, reason, detail)
 
@@ -395,12 +393,7 @@ def summary_record_from_jsonable(d: Any) -> Optional[SummaryRecord]:
     raw_ranges = d.get("input_event_ranges", []) or []
     input_ranges: list[tuple[int, int]] = []
     for r in raw_ranges:
-        if (
-            isinstance(r, list)
-            and len(r) == 2
-            and isinstance(r[0], int)
-            and isinstance(r[1], int)
-        ):
+        if isinstance(r, list) and len(r) == 2 and isinstance(r[0], int) and isinstance(r[1], int):
             input_ranges.append((r[0], r[1]))
     return SummaryRecord(
         summary_id=sid,
@@ -431,9 +424,7 @@ def context_state_to_jsonable(state: ContextState) -> dict:
     # ``active_summary_by_scope`` and ``failure_count`` use composite
     # keys; serialise as parallel lists.
     return {
-        "summaries": {
-            sid: summary_record_to_jsonable(rec) for sid, rec in state.summaries.items()
-        },
+        "summaries": {sid: summary_record_to_jsonable(rec) for sid, rec in state.summaries.items()},
         "active_summary_by_scope": [
             {"scope": _scope_to_jsonable(scope), "summary_id": sid}
             for scope, sid in state.active_summary_by_scope.items()
@@ -448,8 +439,7 @@ def context_state_to_jsonable(state: ContextState) -> dict:
             for key, count in state.failure_count.items()
         ],
         "disabled_scopes": [
-            {"summarizer_id": key[0], "scope": list(key[1])}
-            for key in state.disabled_scopes
+            {"summarizer_id": key[0], "scope": list(key[1])} for key in state.disabled_scopes
         ],
     }
 
@@ -612,9 +602,7 @@ def estimate_context_pressure(
 
     suggested = None
     if needs and context_state is not None and bus_length > 0:
-        suggested = select_compaction_range(
-            context_state, scope, bus_length=bus_length
-        )
+        suggested = select_compaction_range(context_state, scope, bus_length=bus_length)
 
     out = ContextPressure(
         estimated_tokens=estimated_tokens,
@@ -682,10 +670,6 @@ def context_state_from_jsonable(d: Any) -> ContextState:
                 continue
             sumid = entry.get("summarizer_id")
             scope_list = entry.get("scope")
-            if (
-                isinstance(sumid, str)
-                and isinstance(scope_list, list)
-                and len(scope_list) == 3
-            ):
+            if isinstance(sumid, str) and isinstance(scope_list, list) and len(scope_list) == 3:
                 state.disabled_scopes.add((sumid, tuple(scope_list)))
     return state

@@ -81,9 +81,7 @@ def _parse_grant(args: str) -> ParsedCommand:
     tokens = _split_args(args)
     kv = _parse_kv(tokens)
     if len(tokens) != 2:
-        raise SlashCommandError(
-            "usage: /grant <participant> <CAPABILITY> [expires_in=<seconds>]"
-        )
+        raise SlashCommandError("usage: /grant <participant> <CAPABILITY> [expires_in=<seconds>]")
     grantee, capability = tokens
     expires_at = None
     if "expires_in" in kv:
@@ -288,6 +286,7 @@ def dispatch_slash_command(
     # ``lease_id`` and ``scheduled`` flags.
     if parsed.action_name == "SUMMARIZE":
         from loom.kernel.context import ContextScope
+
         scope = ContextScope(
             room_id=getattr(coordinator.config, "room_id", "main"),
             thread_id=parsed.params.get("thread_id", "main"),

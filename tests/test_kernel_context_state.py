@@ -18,7 +18,6 @@ import unittest
 
 from loom.kernel.context import (
     ContextScope,
-    ContextState,
     SUMMARY_RECORD_SCHEMA_VERSION,
     SummaryFailureReason,
     SummaryRecord,
@@ -145,9 +144,7 @@ class LineageValidation(unittest.TestCase):
             input_summary_ids=("p1",),
             input_event_ranges=((5, 9),),
         )
-        ok, reason, _ = validate_lineage(
-            child, input_summary_lookup={"p1": parent}
-        )
+        ok, reason, _ = validate_lineage(child, input_summary_lookup={"p1": parent})
         self.assertFalse(ok)
         self.assertEqual(reason, SummaryFailureReason.CROSS_SCOPE)
 
@@ -163,9 +160,7 @@ class LineageValidation(unittest.TestCase):
             input_summary_ids=("p1",),
             input_event_ranges=((5, 9),),
         )
-        ok, reason, _ = validate_lineage(
-            child, input_summary_lookup={"p1": parent}
-        )
+        ok, reason, _ = validate_lineage(child, input_summary_lookup={"p1": parent})
         self.assertTrue(ok, msg=f"reason={reason!r}")
 
 
@@ -214,9 +209,7 @@ class ContextStateJsonRoundTrip(unittest.TestCase):
         st.failure_count[key] = 3
         rt = context_state_from_jsonable(context_state_to_jsonable(st))
         self.assertEqual(list(rt.summaries.keys()), [rec.summary_id])
-        self.assertEqual(
-            rt.summaries[rec.summary_id].covers_event_range, (0, 9)
-        )
+        self.assertEqual(rt.summaries[rec.summary_id].covers_event_range, (0, 9))
         self.assertEqual(rt.active_summary_by_scope[rec.scope], rec.summary_id)
         self.assertEqual(rt.supersession_edges["old_id"], rec.summary_id)
         self.assertEqual(rt.failure_count[key], 3)

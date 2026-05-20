@@ -84,9 +84,7 @@ class EffectRegistryBasics(unittest.TestCase):
     def test_apply_routes_through_registered_reducer(self):
         reg = EffectRegistry()
         seen: list[tuple[KernelState, ControlEffect]] = []
-        reg.register(
-            "topic_changed", 1, lambda s, e: seen.append((s, e))
-        )
+        reg.register("topic_changed", 1, lambda s, e: seen.append((s, e)))
         state = _fresh_state()
         effect = TopicChangedEffect(topic="hello")
         reg.apply(state, effect)
@@ -107,8 +105,13 @@ class EffectRegistryBasics(unittest.TestCase):
 
     def test_register_different_versions_coexist(self):
         reg = EffectRegistry()
-        v1 = lambda s, e: None
-        v2 = lambda s, e: None
+
+        def v1(s, e):
+            return None
+
+        def v2(s, e):
+            return None
+
         reg.register("topic_changed", 1, v1)
         reg.register("topic_changed", 2, v2)
         self.assertIs(reg.get("topic_changed", 1), v1)
@@ -262,9 +265,7 @@ class CoordinatorRoutesThroughRegistry(unittest.TestCase):
         coord.set_topic("hello")
         self.assertEqual(coord.state.topic, "hello")
         self.assertGreater(coord.kernel_state.version, before)
-        topics = [
-            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "topic_changed"
-        ]
+        topics = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "topic_changed"]
         self.assertEqual(len(topics), 1)
 
     def test_set_anchor_routes_through_registry(self):
@@ -301,9 +302,7 @@ class CoordinatorRoutesThroughRegistry(unittest.TestCase):
         v_after_first = coord.kernel_state.version
         coord.set_topic("hello")  # same value — should short-circuit
         self.assertEqual(coord.kernel_state.version, v_after_first)
-        topics = [
-            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "topic_changed"
-        ]
+        topics = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "topic_changed"]
         self.assertEqual(len(topics), 1)
 
     def test_apply_effect_raises_for_unregistered_effect_type(self):

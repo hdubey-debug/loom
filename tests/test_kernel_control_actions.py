@@ -26,10 +26,7 @@ from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.capabilities import CapabilityName
 from loom.kernel.control_actions import (
-    ControlAction,
-    ControlActionRegistry,
     DenialReason,
-    KERNEL_BUILTIN_ACTIONS,
     SetTopicAction,
     build_kernel_action_registry,
 )
@@ -65,8 +62,7 @@ class ActionRegistry(unittest.TestCase):
     def test_kernel_builtin_set_includes_doctrine_actions(self):
         reg = build_kernel_action_registry()
         names = reg.names()
-        for n in ("SET_TOPIC", "SET_ANCHOR", "SET_DEFAULT_RESPONDER",
-                  "SET_ROLES", "SET_STYLE"):
+        for n in ("SET_TOPIC", "SET_ANCHOR", "SET_DEFAULT_RESPONDER", "SET_ROLES", "SET_STYLE"):
             self.assertIn(n, names)
 
     def test_get_returns_registered_action(self):
@@ -110,10 +106,12 @@ class ProposalLifecycle(unittest.TestCase):
         self.assertTrue(result.granted)
         self.assertEqual(coord.state.topic, "derivatives lesson")
         # Proposed + applied events both fire.
-        proposed = [x for x in coord.bus.snapshot()
-                    if ev.control_type_of(x) == "control_action_proposed"]
-        applied = [x for x in coord.bus.snapshot()
-                   if ev.control_type_of(x) == "control_action_applied"]
+        proposed = [
+            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "control_action_proposed"
+        ]
+        applied = [
+            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "control_action_applied"
+        ]
         self.assertEqual(len(proposed), 1)
         self.assertEqual(len(applied), 1)
         self.assertEqual(applied[0].body["action_name"], "SET_TOPIC")
@@ -143,7 +141,8 @@ class ProposalLifecycle(unittest.TestCase):
         coord = _coord()
         _grant_capability(coord, "loom", CapabilityName.SET_ROLES)
         result = coord.propose_control_action(
-            "loom", "SET_ROLES",
+            "loom",
+            "SET_ROLES",
             {"roles": {"loom": "teacher"}},
         )
         self.assertTrue(result.granted)
@@ -152,9 +151,7 @@ class ProposalLifecycle(unittest.TestCase):
     def test_set_style_full_lifecycle(self):
         coord = _coord()
         _grant_capability(coord, "loom", CapabilityName.SET_TOPIC)  # proxy
-        result = coord.propose_control_action(
-            "loom", "SET_STYLE", {"style": "brief"}
-        )
+        result = coord.propose_control_action("loom", "SET_STYLE", {"style": "brief"})
         self.assertTrue(result.granted)
         self.assertEqual(coord.state.control.style, "brief")
 
@@ -162,8 +159,7 @@ class ProposalLifecycle(unittest.TestCase):
         coord = _coord()
         _grant_capability(coord, "loom", CapabilityName.SET_TOPIC)
         coord.propose_control_action("loom", "SET_TOPIC", {"topic": "x"})
-        closed = [x for x in coord.bus.snapshot()
-                  if ev.control_type_of(x) == "lease_closed"]
+        closed = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_closed"]
         # One lease_closed for the CONTROL_ACTION lease released
         # after apply.
         self.assertEqual(len(closed), 1)
@@ -177,15 +173,18 @@ class DenialPath(unittest.TestCase):
         result = coord.propose_control_action("loom", "NOT_REAL", {})
         self.assertFalse(result.granted)
         self.assertEqual(result.reason, DenialReason.UNKNOWN_ACTION)
-        denied = [x for x in coord.bus.snapshot()
-                  if ev.control_type_of(x) == "control_action_denied"]
+        denied = [
+            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "control_action_denied"
+        ]
         self.assertEqual(denied[0].body["reason"], "UNKNOWN_ACTION")
 
     def test_invalid_params_denied(self):
         coord = _coord()
         _grant_capability(coord, "loom", CapabilityName.SET_TOPIC)
         result = coord.propose_control_action(
-            "loom", "SET_TOPIC", {"topic": 123}  # not a str
+            "loom",
+            "SET_TOPIC",
+            {"topic": 123},  # not a str
         )
         self.assertFalse(result.granted)
         self.assertEqual(result.reason, DenialReason.INVALID_PARAMS)
@@ -193,9 +192,7 @@ class DenialPath(unittest.TestCase):
     def test_insufficient_capability_denied(self):
         coord = _coord()
         # No capability granted.
-        result = coord.propose_control_action(
-            "loom", "SET_TOPIC", {"topic": "x"}
-        )
+        result = coord.propose_control_action("loom", "SET_TOPIC", {"topic": "x"})
         self.assertFalse(result.granted)
         self.assertEqual(result.reason, DenialReason.INSUFFICIENT_CAPABILITY)
 

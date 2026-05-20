@@ -20,7 +20,6 @@ Test classes:
 
 from __future__ import annotations
 
-import time
 import unittest
 
 from loom.kernel import events as ev
@@ -29,7 +28,6 @@ from loom.kernel.capabilities import CapabilityName
 from loom.kernel.coordinator import (
     DEFAULT_LEASE_CHECKS,
     RoomCoordinator,
-    _CapabilityCheck,
 )
 from loom.kernel.effects import CapabilityGrantedEffect
 from loom.kernel.leases import (
@@ -82,15 +80,17 @@ class LeaseShape(unittest.TestCase):
     def test_lease_post_init_accepts_matching_kind_context(self):
         # All five (kind, context) pairs construct cleanly.
         pairs = [
-            (LeaseKind.USER_TURN, UserTurnContext(user_turn_id=1, trigger_event_id=0, room_epoch=0)),
+            (
+                LeaseKind.USER_TURN,
+                UserTurnContext(user_turn_id=1, trigger_event_id=0, room_epoch=0),
+            ),
             (LeaseKind.CONTROL_ACTION, ControlActionContext(action_name="SET_TOPIC")),
             (LeaseKind.TOOL_INVOCATION, ToolInvocationContext(tool_name="x")),
             (LeaseKind.WORKFLOW_STEP, WorkflowStepContext(workflow_id="w", step_id="s")),
             (LeaseKind.REACTIVE, ReactiveContext(reason="dead_letter")),
         ]
         for kind, ctx in pairs:
-            Lease(id=1, kind=kind, holder="loom", context=ctx,
-                  acquired_at=0.0, expires_at=1.0)
+            Lease(id=1, kind=kind, holder="loom", context=ctx, acquired_at=0.0, expires_at=1.0)
 
 
 class AppliesToFiltering(unittest.TestCase):
@@ -100,6 +100,7 @@ class AppliesToFiltering(unittest.TestCase):
 
             def check(self, **_kw):
                 from loom.contracts import PASSED
+
                 return PASSED
 
         # No applies_to attribute → defaults to ALL_LEASE_KINDS.
@@ -115,7 +116,8 @@ class AppliesToFiltering(unittest.TestCase):
 
     def test_user_turn_only_checks(self):
         names = {
-            chk.name for chk in DEFAULT_LEASE_CHECKS
+            chk.name
+            for chk in DEFAULT_LEASE_CHECKS
             if check_applies_to(chk) == frozenset({LeaseKind.USER_TURN})
         }
         # The v0.2 chat-specific checks.
@@ -128,8 +130,7 @@ class AppliesToFiltering(unittest.TestCase):
 
     def test_universal_checks(self):
         names = {
-            chk.name for chk in DEFAULT_LEASE_CHECKS
-            if check_applies_to(chk) == ALL_LEASE_KINDS
+            chk.name for chk in DEFAULT_LEASE_CHECKS if check_applies_to(chk) == ALL_LEASE_KINDS
         }
         # Participant registration / activity gates apply to every kind.
         self.assertIn("participant_registered", names)
@@ -137,9 +138,7 @@ class AppliesToFiltering(unittest.TestCase):
 
     def test_capability_check_applies_to_control_and_summarization(self):
         # v0.3.x PR 5: SUMMARIZATION leases share the capability gate.
-        cap_check = next(
-            chk for chk in DEFAULT_LEASE_CHECKS if chk.name == "capability"
-        )
+        cap_check = next(chk for chk in DEFAULT_LEASE_CHECKS if chk.name == "capability")
         self.assertEqual(
             check_applies_to(cap_check),
             frozenset({LeaseKind.CONTROL_ACTION, LeaseKind.SUMMARIZATION}),
@@ -165,10 +164,7 @@ class AcquireTypedLeaseReactive(unittest.TestCase):
         ctx = ReactiveContext(reason="x")
         lease = coord.acquire_typed_lease(LeaseKind.REACTIVE, "ghost", ctx)
         self.assertIsNone(lease)
-        denials = [
-            x for x in coord.bus.snapshot()
-            if ev.control_type_of(x) == "lease_denied"
-        ]
+        denials = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_denied"]
         self.assertEqual(len(denials), 1)
         self.assertEqual(denials[0].body["deny_reason"], "unknown_participant")
 
@@ -187,10 +183,7 @@ class AcquireTypedLeaseControlAction(unittest.TestCase):
         ctx = ControlActionContext(action_name="SET_TOPIC")
         lease = coord.acquire_typed_lease(LeaseKind.CONTROL_ACTION, "loom", ctx)
         self.assertIsNone(lease)
-        denials = [
-            x for x in coord.bus.snapshot()
-            if ev.control_type_of(x) == "lease_denied"
-        ]
+        denials = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_denied"]
         self.assertEqual(len(denials), 1)
         self.assertEqual(denials[0].body["deny_reason"], "insufficient_capability")
         self.assertEqual(denials[0].body["check_name"], "capability")
@@ -226,10 +219,7 @@ class AcquireTypedLeaseControlAction(unittest.TestCase):
         ctx = ControlActionContext(action_name="NOT_A_REAL_ACTION")
         lease = coord.acquire_typed_lease(LeaseKind.CONTROL_ACTION, "loom", ctx)
         self.assertIsNone(lease)
-        denials = [
-            x for x in coord.bus.snapshot()
-            if ev.control_type_of(x) == "lease_denied"
-        ]
+        denials = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_denied"]
         self.assertEqual(denials[0].body["deny_reason"], "unknown_control_action")
 
 
@@ -242,6 +232,7 @@ class AcquireTypedLeaseUserTurn(unittest.TestCase):
         # pattern existing coordinator tests use (plan_for_default
         # against the participant + open_user_turn directly).
         from loom.kernel.obligations import plan_for_default
+
         user_event = ev.chat(sender="user", body="hello")
         coord.bus.post(user_event)
         plan = plan_for_default("loom", reason="test", target_event_ids=[user_event.id])

@@ -11,7 +11,6 @@ import unittest
 
 from loom.kernel import events as ev
 from loom.kernel.actor_state import (
-    ActorStateRecord,
     CursorAdvancedEffect,
     cursor_for,
     register_cursor_advanced_reducer,
@@ -49,9 +48,14 @@ class CursorReducer(unittest.TestCase):
         reg = build_kernel_registry()
         register_cursor_advanced_reducer(reg)
         state = new_kernel_state(RoomState(config=RoomConfig()))
-        reg.apply(state, CursorAdvancedEffect(
-            participant_id="loom", from_cursor=-1, to_cursor=42,
-        ))
+        reg.apply(
+            state,
+            CursorAdvancedEffect(
+                participant_id="loom",
+                from_cursor=-1,
+                to_cursor=42,
+            ),
+        )
         self.assertIsNotNone(state.actors)
         rec = state.actors["loom"]
         self.assertEqual(rec.cursor, 42)
@@ -61,12 +65,22 @@ class CursorReducer(unittest.TestCase):
         reg = build_kernel_registry()
         register_cursor_advanced_reducer(reg)
         state = new_kernel_state(RoomState(config=RoomConfig()))
-        reg.apply(state, CursorAdvancedEffect(
-            participant_id="loom", from_cursor=-1, to_cursor=10,
-        ))
-        reg.apply(state, CursorAdvancedEffect(
-            participant_id="loom", from_cursor=10, to_cursor=20,
-        ))
+        reg.apply(
+            state,
+            CursorAdvancedEffect(
+                participant_id="loom",
+                from_cursor=-1,
+                to_cursor=10,
+            ),
+        )
+        reg.apply(
+            state,
+            CursorAdvancedEffect(
+                participant_id="loom",
+                from_cursor=10,
+                to_cursor=20,
+            ),
+        )
         self.assertEqual(state.actors["loom"].cursor, 20)
 
     def test_cursor_for_helper_returns_none_when_no_record(self):
@@ -77,25 +91,32 @@ class CursorReducer(unittest.TestCase):
         reg = build_kernel_registry()
         register_cursor_advanced_reducer(reg)
         state = new_kernel_state(RoomState(config=RoomConfig()))
-        reg.apply(state, CursorAdvancedEffect(
-            participant_id="loom", from_cursor=-1, to_cursor=99,
-        ))
+        reg.apply(
+            state,
+            CursorAdvancedEffect(
+                participant_id="loom",
+                from_cursor=-1,
+                to_cursor=99,
+            ),
+        )
         self.assertEqual(cursor_for(state, "loom"), 99)
 
 
 class CoordinatorWiresCursorReducer(unittest.TestCase):
     def test_coordinator_registers_cursor_reducer(self):
         coord = _coord()
-        self.assertTrue(
-            coord._effect_registry.has("cursor_advanced", 1)
-        )
+        self.assertTrue(coord._effect_registry.has("cursor_advanced", 1))
 
     def test_apply_cursor_advanced_via_coordinator(self):
         coord = _coord()
         with coord._lock:
-            coord._apply_effect(CursorAdvancedEffect(
-                participant_id="loom", from_cursor=-1, to_cursor=7,
-            ))
+            coord._apply_effect(
+                CursorAdvancedEffect(
+                    participant_id="loom",
+                    from_cursor=-1,
+                    to_cursor=7,
+                )
+            )
         self.assertEqual(cursor_for(coord.kernel_state, "loom"), 7)
 
 
@@ -106,12 +127,9 @@ class ReplayDeterminism(unittest.TestCase):
         live = new_kernel_state(RoomState(config=RoomConfig()))
         replay = new_kernel_state(RoomState(config=RoomConfig()))
         seq = [
-            CursorAdvancedEffect(
-                participant_id="loom", from_cursor=-1, to_cursor=5),
-            CursorAdvancedEffect(
-                participant_id="claude_code", from_cursor=-1, to_cursor=3),
-            CursorAdvancedEffect(
-                participant_id="loom", from_cursor=5, to_cursor=12),
+            CursorAdvancedEffect(participant_id="loom", from_cursor=-1, to_cursor=5),
+            CursorAdvancedEffect(participant_id="claude_code", from_cursor=-1, to_cursor=3),
+            CursorAdvancedEffect(participant_id="loom", from_cursor=5, to_cursor=12),
         ]
         for e in seq:
             reg.apply(live, e)
@@ -135,19 +153,18 @@ class PolicySlowThresholdFromConfig(unittest.TestCase):
         # Drive a slow classify_fn (sleep 50ms) under a 10ms threshold
         # → expect policy_slow event whose threshold_ms == 10.0.
         import time
+
         coord = _coord(policy_slow_threshold_ms=10.0)
         from loom.kernel.obligations import plan_for_default
 
         def slow_classify(e):
             time.sleep(0.05)
-            return plan_for_default("loom", reason="t",
-                                    target_event_ids=[e.id])
+            return plan_for_default("loom", reason="t", target_event_ids=[e.id])
 
         user_event = ev.chat(sender="user", body="hi")
         coord.bus.post(user_event)
         coord.post_user_event_and_open_turn(user_event, slow_classify)
-        slows = [x for x in coord.bus.snapshot()
-                 if ev.control_type_of(x) == "policy_slow"]
+        slows = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "policy_slow"]
         self.assertEqual(len(slows), 1)
         self.assertEqual(slows[0].body["threshold_ms"], 10.0)
 

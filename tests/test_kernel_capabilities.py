@@ -200,9 +200,7 @@ class AntiEscalation(unittest.TestCase):
         with self.assertRaises(EscalationDenied):
             reg.apply(state, effect)
         # State unchanged.
-        self.assertTrue(
-            state.capabilities is None or len(state.capabilities.grants) == 0
-        )
+        self.assertTrue(state.capabilities is None or len(state.capabilities.grants) == 0)
 
     def test_agent_cannot_self_promote_via_revoke_meta(self):
         reg = self._registry()
@@ -239,9 +237,7 @@ class CoordinatorWiresLedger(unittest.TestCase):
         )
         with coord._lock:
             coord._apply_effect(effect)
-        self.assertTrue(
-            coord.kernel_state.capabilities.has("loom", CapabilityName.SET_TOPIC)
-        )
+        self.assertTrue(coord.kernel_state.capabilities.has("loom", CapabilityName.SET_TOPIC))
 
     def test_apply_capability_revoked_effect_removes_capability(self):
         coord = self._coord()
@@ -253,13 +249,9 @@ class CoordinatorWiresLedger(unittest.TestCase):
         )
         with coord._lock:
             coord._apply_effect(granted)
-            coord._apply_effect(
-                CapabilityRevokedEffect(grant_id="g1", revoker_id="user")
-            )
+            coord._apply_effect(CapabilityRevokedEffect(grant_id="g1", revoker_id="user"))
         self.assertFalse(
-            coord.kernel_state.capabilities.has(
-                "loom", CapabilityName.SET_TOPIC, now=150.0
-            )
+            coord.kernel_state.capabilities.has("loom", CapabilityName.SET_TOPIC, now=150.0)
         )
 
     def test_apply_capability_expired_marks_inactive(self):
@@ -276,9 +268,7 @@ class CoordinatorWiresLedger(unittest.TestCase):
             coord._apply_effect(CapabilityExpiredEffect(grant_id="g1"))
         # The grant is now marked revoked-at-expiry; not in effective set.
         self.assertFalse(
-            coord.kernel_state.capabilities.has(
-                "loom", CapabilityName.SET_TOPIC, now=200.0
-            )
+            coord.kernel_state.capabilities.has("loom", CapabilityName.SET_TOPIC, now=200.0)
         )
 
 
@@ -324,6 +314,7 @@ class CapabilityEvents(unittest.TestCase):
         # The shape validator runs at from_jsonl time. Build a
         # synthetic JSON line that omits grant_id.
         import json
+
         line = json.dumps(
             {
                 "kind": "control",

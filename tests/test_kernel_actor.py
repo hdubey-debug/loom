@@ -462,9 +462,7 @@ class CursorAdvanceOnDeny(unittest.TestCase):
 
         def handler(actor, trig, lease):
             calls.append((actor.id, trig.id))
-            coord.on_stream_end(
-                lease, "committed", committed_text="ok", cost_tokens=1
-            )
+            coord.on_stream_end(lease, "committed", committed_text="ok", cost_tokens=1)
 
         return bus, state, coord, handler, calls
 
@@ -523,9 +521,7 @@ class CursorAdvanceOnDeny(unittest.TestCase):
 
     def test_skip_does_not_repend(self):
         bus, state, coord, _handler, _calls = self._make()
-        actor = ParticipantActor(
-            "claude_code", bus, coord, lambda *a, **k: None
-        )
+        actor = ParticipantActor("claude_code", bus, coord, lambda *a, **k: None)
         e = _user_post(bus, "hi")  # broadcast → claude_code SKIPs
         _open_default(coord, e, "loom")
         d = actor.step()

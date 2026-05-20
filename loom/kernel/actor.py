@@ -40,7 +40,7 @@ Tie-break: newest event wins (highest id) within the same priority class.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Iterable, Literal, Optional
 import threading
 
@@ -346,10 +346,7 @@ class ParticipantActor:
         snap, decision = self._decide_once()
         granted = self._dispatch_decision(decision)
         self._advance_cursor(snap)
-        if (
-            decision.action == "DRAFT"
-            and decision.trigger_event_id is not None
-        ):
+        if decision.action == "DRAFT" and decision.trigger_event_id is not None:
             if granted:
                 # Successful attempt — clear any stale denial entry.
                 self._denied_trigger_ids.discard(decision.trigger_event_id)
@@ -449,10 +446,7 @@ class ParticipantActor:
         priority_fn = self.coordinator.config.trigger_priority or None
         decision = decide(snap, self.id, self.coordinator.user_turn, priority_fn=priority_fn)
 
-        if (
-            decision.action == "DRAFT"
-            and decision.trigger_event_id in self._denied_trigger_ids
-        ):
+        if decision.action == "DRAFT" and decision.trigger_event_id in self._denied_trigger_ids:
             decision = AgentDecision(
                 action="SKIP",
                 trigger_event_id=None,

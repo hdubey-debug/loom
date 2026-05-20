@@ -101,9 +101,11 @@ class TestProcessRestartFromJournal:
             policy=SingleResponderPolicy("r10"),
         )
         assert restored is not None
-        assert restored.get("topic") == "restart-topic"
-        assert restored.get("anchor_id") == "r10"
-        assert restored.get("default_responder_id") == "r10"
+        # v0.3 PR 1 nests room fields under "room" in the snapshot envelope.
+        room_snap = restored.get("room") or restored
+        assert room_snap.get("topic") == "restart-topic"
+        assert room_snap.get("anchor_id") == "r10"
+        assert room_snap.get("default_responder_id") == "r10"
         # The fresh room is functional.
         replies = new_room.post_and_wait("post-restart", timeout=5.0)
         assert isinstance(replies, (list, __import__("loom").TurnResult))
@@ -129,7 +131,8 @@ class TestProcessRestartFromJournal:
             policy=RoundRobinPolicy(order),
         )
         assert restored is not None
-        ctl = restored.get("control") or {}
+        room_snap = restored.get("room") or restored
+        ctl = room_snap.get("control") or {}
         # v5 schema: a non-empty turn_order is the round-robin signal.
         assert ctl.get("turn_order") == pre_order == order
         assert ctl.get("next_speaker_idx") == pre_pointer
@@ -161,7 +164,8 @@ class TestProcessRestartFromJournal:
         loader = Journal(journal_dir)
         restored = loader.load_state()
         assert restored is not None
-        ctl = restored.get("control") or {}
+        room_snap = restored.get("room") or restored
+        ctl = room_snap.get("control") or {}
         assert ctl.get("roles") == {"rc0": "teacher", "rc1": "student"}
         # v0.2: floor_owner removed from kernel state and snapshots.
         assert "floor_owner" not in ctl
@@ -261,7 +265,7 @@ class TestGracefulShutdown:
         loader = Journal(journal_dir)
         snap = loader.load_state()
         assert snap is not None
-        assert snap.get("version") in (1, 2, 3, 4, 5)
+        assert snap.get("version") in (1, 2, 3, 4, 5, 6, 7)
 
     def test_stop_with_in_flight_streams_marks_lease_expired_or_cancelled(
         self, mixed_agent_room, event_recorder

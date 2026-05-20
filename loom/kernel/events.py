@@ -544,9 +544,7 @@ def _validate_policy_slow(body: dict) -> None:
 def _validate_policy_error(body: dict) -> None:
     ec = body.get("exception_class")
     if not isinstance(ec, str) or not ec:
-        raise EventShapeError(
-            "policy_error body must have non-empty str 'exception_class'"
-        )
+        raise EventShapeError("policy_error body must have non-empty str 'exception_class'")
     msg = body.get("message")
     if not isinstance(msg, str):
         raise EventShapeError("policy_error body must have str 'message'")
@@ -564,9 +562,7 @@ def _validate_capability_granted(body: dict) -> None:
     for k in ("grant_id", "grantor_id", "grantee_id", "capability"):
         v = body.get(k)
         if not isinstance(v, str) or not v:
-            raise EventShapeError(
-                f"capability_granted body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"capability_granted body must have non-empty str {k!r}")
     if not _is_int(body.get("source_event_id")):
         raise EventShapeError("capability_granted body must have int 'source_event_id'")
     ea = body.get("expires_at")
@@ -615,25 +611,19 @@ def _validate_budget_refunded(body: dict) -> None:
 def _validate_control_action_proposed(body: dict) -> None:
     for k in ("action_name", "proposer_id"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"control_action_proposed body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"control_action_proposed body must have non-empty str {k!r}")
 
 
 def _validate_control_action_applied(body: dict) -> None:
     for k in ("action_name", "applier_id"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"control_action_applied body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"control_action_applied body must have non-empty str {k!r}")
 
 
 def _validate_control_action_denied(body: dict) -> None:
     for k in ("action_name", "proposer_id", "reason"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"control_action_denied body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"control_action_denied body must have non-empty str {k!r}")
 
 
 def _validate_lease_closed(body: dict) -> None:
@@ -641,9 +631,7 @@ def _validate_lease_closed(body: dict) -> None:
         raise EventShapeError("lease_closed body must have int 'lease_id'")
     for k in ("holder", "kind", "reason"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"lease_closed body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"lease_closed body must have non-empty str {k!r}")
 
 
 def _validate_stream_stalled(body: dict) -> None:
@@ -658,45 +646,28 @@ def _validate_stream_stalled(body: dict) -> None:
 def _validate_summary_proposed(body: dict) -> None:
     for k in ("summary_id", "summarizer_id"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"summary_proposed body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"summary_proposed body must have non-empty str {k!r}")
     scope = body.get("scope")
     if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
-        raise EventShapeError(
-            "summary_proposed body must have dict 'scope' with str 'room_id'"
-        )
+        raise EventShapeError("summary_proposed body must have dict 'scope' with str 'room_id'")
     cer = body.get("covers_event_range")
-    if not (
-        isinstance(cer, list)
-        and len(cer) == 2
-        and _is_int(cer[0])
-        and _is_int(cer[1])
-    ):
-        raise EventShapeError(
-            "summary_proposed body must have list[int, int] 'covers_event_range'"
-        )
+    if not (isinstance(cer, list) and len(cer) == 2 and _is_int(cer[0]) and _is_int(cer[1])):
+        raise EventShapeError("summary_proposed body must have list[int, int] 'covers_event_range'")
 
 
 def _validate_summary_committed(body: dict) -> None:
     _validate_summary_proposed(body)
     if not _is_int(body.get("committed_at_event_id", 0)):
-        raise EventShapeError(
-            "summary_committed body must have int 'committed_at_event_id'"
-        )
+        raise EventShapeError("summary_committed body must have int 'committed_at_event_id'")
 
 
 def _validate_summary_failed(body: dict) -> None:
     for k in ("proposed_summary_id", "reason"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"summary_failed body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"summary_failed body must have non-empty str {k!r}")
     scope = body.get("scope")
     if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
-        raise EventShapeError(
-            "summary_failed body must have dict 'scope' with str 'room_id'"
-        )
+        raise EventShapeError("summary_failed body must have dict 'scope' with str 'room_id'")
 
 
 def _validate_summarization_scheduled(body: dict) -> None:
@@ -716,16 +687,12 @@ def _validate_summarization_scheduled(body: dict) -> None:
 def _validate_compaction_disabled(body: dict) -> None:
     for k in ("summarizer_id", "reason"):
         if not isinstance(body.get(k), str) or not body[k]:
-            raise EventShapeError(
-                f"compaction_disabled body must have non-empty str {k!r}"
-            )
+            raise EventShapeError(f"compaction_disabled body must have non-empty str {k!r}")
     if not _is_int(body.get("failure_count")):
         raise EventShapeError("compaction_disabled body must have int 'failure_count'")
     scope = body.get("scope")
     if not isinstance(scope, dict) or not isinstance(scope.get("room_id"), str):
-        raise EventShapeError(
-            "compaction_disabled body must have dict 'scope' with str 'room_id'"
-        )
+        raise EventShapeError("compaction_disabled body must have dict 'scope' with str 'room_id'")
 
 
 _CONTROL_PAYLOAD_VALIDATORS: dict = {
@@ -814,9 +781,7 @@ def _validate_event_dict(d: Any) -> None:
     if "causal_refs" in d:
         cr = d["causal_refs"]
         if not isinstance(cr, list):
-            raise EventShapeError(
-                f"causal_refs must be a list, got {type(cr).__name__}"
-            )
+            raise EventShapeError(f"causal_refs must be a list, got {type(cr).__name__}")
     # v0.3 PR 4 envelope addition (doctrine P12). ``trace`` is dict
     # or null; absent means "no trace context" (legacy lines). The
     # full structural check (trace_id / span_id non-empty) lives in
@@ -825,9 +790,7 @@ def _validate_event_dict(d: Any) -> None:
     if "trace" in d:
         tr = d["trace"]
         if tr is not None and not isinstance(tr, dict):
-            raise EventShapeError(
-                f"trace must be a dict or null, got {type(tr).__name__}"
-            )
+            raise EventShapeError(f"trace must be a dict or null, got {type(tr).__name__}")
     # v0.3.x PR 1 (doctrine P21): thread_id is a non-empty str. Absent
     # in legacy lines → loads as default "main" via Event(...).
     if "thread_id" in d:
@@ -1387,7 +1350,9 @@ def lease_closed(
     return _control("lease_closed", **body)
 
 
-def budget_refunded(*, lease_id: int, amount: float, reason: str, scope: Optional[dict] = None) -> Event:
+def budget_refunded(
+    *, lease_id: int, amount: float, reason: str, scope: Optional[dict] = None
+) -> Event:
     """v0.3 PR 6 / doctrine §9 — refund a reservation.
 
     ``reason`` is a short structured string mirroring the lease

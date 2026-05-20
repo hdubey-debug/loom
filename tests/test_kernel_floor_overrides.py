@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import unittest
 
-from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
 from loom.kernel.capabilities import CapabilityName
 from loom.kernel.coordinator import RoomCoordinator
@@ -21,7 +20,6 @@ from loom.kernel.floor_overrides import (
     prune_overrides_for_turn,
 )
 from loom.kernel.room import ParticipantInfo, RoomConfig, RoomState
-from loom.kernel.state import new_kernel_state
 
 
 def _coord() -> RoomCoordinator:
@@ -133,9 +131,7 @@ class ReducerWiring(unittest.TestCase):
         coord = _coord()
         with self.assertRaises(ValueError):
             with coord._lock:
-                coord._apply_effect(
-                    FloorOverrideEffect(mode="MADE_UP", scope="ONE_LEASE")
-                )
+                coord._apply_effect(FloorOverrideEffect(mode="MADE_UP", scope="ONE_LEASE"))
 
 
 class PruningLifecycle(unittest.TestCase):
@@ -181,9 +177,7 @@ class ControlActionIntegration(unittest.TestCase):
     def test_grant_floor_action_appends_add_one_lease_override(self):
         coord = _coord()
         _grant(coord, "loom", CapabilityName.GRANT_FLOOR)
-        result = coord.propose_control_action(
-            "loom", "GRANT_FLOOR", {"speakers": ["claude_code"]}
-        )
+        result = coord.propose_control_action("loom", "GRANT_FLOOR", {"speakers": ["claude_code"]})
         self.assertTrue(result.granted)
         overrides = coord.state.control.active_overrides
         self.assertEqual(overrides[-1].mode, FloorOverrideMode.ADD)
@@ -193,9 +187,7 @@ class ControlActionIntegration(unittest.TestCase):
     def test_block_floor_action_appends_block_current_turn_override(self):
         coord = _coord()
         _grant(coord, "loom", CapabilityName.UPDATE_ALLOWED_SPEAKERS)
-        result = coord.propose_control_action(
-            "loom", "BLOCK_FLOOR", {"speakers": ["gemini"]}
-        )
+        result = coord.propose_control_action("loom", "BLOCK_FLOOR", {"speakers": ["gemini"]})
         self.assertTrue(result.granted)
         overrides = coord.state.control.active_overrides
         self.assertEqual(overrides[-1].mode, FloorOverrideMode.BLOCK)

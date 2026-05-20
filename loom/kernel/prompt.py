@@ -543,9 +543,7 @@ def build_prompt(
     if active_id is not None and active_id in kctx.summaries:
         rec = kctx.summaries[active_id]
         summary_block = (
-            "<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n"
-            f"{rec.text}\n"
-            "<<<END SUMMARY>>>"
+            f"<<<PRIOR ROOM SUMMARY (canonical compaction)>>>\n{rec.text}\n<<<END SUMMARY>>>"
         )
     else:
         main_summaries = bus.snapshot(

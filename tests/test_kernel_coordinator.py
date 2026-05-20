@@ -1048,9 +1048,7 @@ class LeaseTTLWatchdog(unittest.TestCase):
         c.check_lease_ttl()
         # Find the lease_expired control event.
         events = bus.snapshot()
-        expired = [
-            x for x in events if ev.control_type_of(x) == "lease_expired"
-        ]
+        expired = [x for x in events if ev.control_type_of(x) == "lease_expired"]
         self.assertEqual(len(expired), 1)
         body = expired[0].body
         self.assertEqual(body["holder"], "loom")
@@ -1622,9 +1620,7 @@ class PolicyWatchdog(unittest.TestCase):
         # constant to ``RoomConfig.policy_slow_threshold_ms`` (closes
         # audit D3); set it to a negative value at construction so a
         # negligible call trips it without slowing the test.
-        bus, state, c = _setup(
-            default_responder="loom", policy_slow_threshold_ms=-1.0
-        )
+        bus, state, c = _setup(default_responder="loom", policy_slow_threshold_ms=-1.0)
         e = _user_post(bus, "hi")
         plan = plan_for_default("loom", reason="t", target_event_ids=[e.id])
         c.post_user_event_and_open_turn(e, lambda _e: plan)

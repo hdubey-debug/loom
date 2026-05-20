@@ -345,8 +345,7 @@ class EffectRegistry:
         key = (effect_type, schema_version)
         if key in self._reducers:
             raise ValueError(
-                f"reducer already registered for {effect_type!r} "
-                f"schema v{schema_version}"
+                f"reducer already registered for {effect_type!r} schema v{schema_version}"
             )
         self._reducers[key] = reducer
 
@@ -442,9 +441,7 @@ def _apply_default_summarizer_set(state: KernelState, effect: ControlEffect) -> 
         state.context.failure_count = {
             k: v for k, v in state.context.failure_count.items() if k[0] != prev
         }
-        state.context.disabled_scopes = {
-            k for k in state.context.disabled_scopes if k[0] != prev
-        }
+        state.context.disabled_scopes = {k for k in state.context.disabled_scopes if k[0] != prev}
 
 
 def _apply_roles_assigned(state: KernelState, effect: ControlEffect) -> None:
@@ -501,9 +498,7 @@ def _apply_compaction_disabled(state: KernelState, effect: ControlEffect) -> Non
     assert isinstance(effect, CompactionDisabledEffect)
     if effect.scope is None or not effect.summarizer_id:
         return
-    state.context.disabled_scopes.add(
-        (effect.summarizer_id, effect.scope.as_tuple())
-    )
+    state.context.disabled_scopes.add((effect.summarizer_id, effect.scope.as_tuple()))
 
 
 # ---------------------------------------------------------------------------

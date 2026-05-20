@@ -52,10 +52,8 @@ from loom.kernel.capabilities import CapabilityName
 from loom.kernel.causality import CausalRelation
 from loom.kernel.effects import (
     AnchorAssignedEffect,
-    ChairAssignedEffect,
     ControlEffect,
     DefaultResponderSetEffect,
-    DefaultSummarizerSetEffect,
     RolesAssignedEffect,
     StyleChangedEffect,
     TopicChangedEffect,

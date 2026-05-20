@@ -24,6 +24,7 @@ def _coord(stall_threshold: float = 30.0) -> RoomCoordinator:
 
 def _open_turn_with_lease(coord: RoomCoordinator):
     from loom.kernel.obligations import plan_for_default
+
     user_event = ev.chat(sender="user", body="hi")
     coord.bus.post(user_event)
     plan = plan_for_default("loom", reason="t", target_event_ids=[user_event.id])
@@ -41,13 +42,21 @@ class StreamStalledEvent(unittest.TestCase):
 
     def test_validator_rejects_missing_holder(self):
         import json
-        line = json.dumps({
-            "kind": "control", "sender": "system",
-            "body": {"control_type": "stream_stalled", "lease_id": 1,
-                     "seconds_silent": 1.0},
-            "channel": "main", "addressees": [], "room_epoch": 0,
-            "user_turn_id": None, "meta": {}, "id": 0, "ts": 1.0,
-        })
+
+        line = json.dumps(
+            {
+                "kind": "control",
+                "sender": "system",
+                "body": {"control_type": "stream_stalled", "lease_id": 1, "seconds_silent": 1.0},
+                "channel": "main",
+                "addressees": [],
+                "room_epoch": 0,
+                "user_turn_id": None,
+                "meta": {},
+                "id": 0,
+                "ts": 1.0,
+            }
+        )
         with self.assertRaises(EventShapeError):
             Event.from_jsonl(line)
 
@@ -76,8 +85,7 @@ class StreamingStallWatchdog(unittest.TestCase):
         # Event sequence: stream_stalled + lease_closed(aborted).
         types_seen = [ev.control_type_of(x) for x in coord.bus.snapshot()]
         self.assertIn("stream_stalled", types_seen)
-        closed = [x for x in coord.bus.snapshot()
-                  if ev.control_type_of(x) == "lease_closed"]
+        closed = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_closed"]
         # At least one lease_closed with reason "aborted".
         self.assertTrue(any(x.body["reason"] == "aborted" for x in closed))
 

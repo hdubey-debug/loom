@@ -235,7 +235,8 @@ class CapabilityState:
     ) -> tuple[CapabilityGrant, ...]:
         """All live grants currently held by ``grantee_id``."""
         return tuple(
-            g for g in self.grants.values()
+            g
+            for g in self.grants.values()
             if g.grantee_id == grantee_id and self.is_live(g, now=now)
         )
 

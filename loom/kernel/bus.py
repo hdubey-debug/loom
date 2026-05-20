@@ -279,10 +279,7 @@ class MessageBus:
         # this assertion catches any future caller that explicitly sets
         # ``thread_id=None`` or to an empty string.
         if not isinstance(ev.thread_id, str) or not ev.thread_id:
-            raise ValueError(
-                f"event thread_id must be a non-empty string, got "
-                f"{ev.thread_id!r}"
-            )
+            raise ValueError(f"event thread_id must be a non-empty string, got {ev.thread_id!r}")
         with self._cond:
             if self._stopped:
                 return -1

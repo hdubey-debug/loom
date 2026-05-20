@@ -20,19 +20,16 @@ import unittest
 from loom.kernel.context import (
     ContextScope,
     SummaryRecord,
-    new_context_state,
 )
 from loom.kernel.journal import (
     Journal,
     SNAPSHOT_VERSION,
-    _migrate_v5_to_v6,
     _migrate_v6_to_v7,
     restore_kernel_state,
 )
 from loom.kernel.room import RoomConfig, RoomState
 from loom.kernel.state import (
     KERNEL_STATE_SCHEMA_VERSION,
-    KernelState,
     new_kernel_state,
 )
 
@@ -134,9 +131,7 @@ class V7RoundTripPreservesContext(unittest.TestCase):
         self.assertEqual(rt.context.summaries["s1"].covers_event_range, (0, 9))
         self.assertEqual(rt.context.active_summary_by_scope[scope], "s1")
         self.assertEqual(rt.context.supersession_edges["s0"], "s1")
-        self.assertEqual(
-            rt.context.failure_count[("loom", scope.as_tuple())], 2
-        )
+        self.assertEqual(rt.context.failure_count[("loom", scope.as_tuple())], 2)
 
 
 if __name__ == "__main__":

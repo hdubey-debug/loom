@@ -79,7 +79,6 @@ from loom.kernel.room import (
     StyleLevel,
 )
 from loom.kernel.context import (
-    ContextState,
     context_state_from_jsonable,
     context_state_to_jsonable,
     new_context_state,
@@ -943,7 +942,5 @@ def restore_kernel_state(
         # before this restore runs, so the slot is always present
         # by the time we read it.
         if isinstance(ver, int) and ver >= 7:
-            kernel.context = context_state_from_jsonable(
-                state_data.get("context")
-            )
+            kernel.context = context_state_from_jsonable(state_data.get("context"))
     return kernel

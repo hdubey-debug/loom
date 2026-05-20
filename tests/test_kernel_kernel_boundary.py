@@ -356,9 +356,7 @@ class ClockDisciplineBoundary(unittest.TestCase):
         pattern = re.compile(r"\btime\.time\s*\(\s*\)")
         hits = self._scan(pattern)
         offenders = [
-            (rel, n, line)
-            for rel, n, line in hits
-            if rel != self._WHITELISTED_TIME_TIME_FILE
+            (rel, n, line) for rel, n, line in hits if rel != self._WHITELISTED_TIME_TIME_FILE
         ]
         self.assertEqual(
             offenders,
@@ -462,7 +460,9 @@ class LockDisciplineBoundary(unittest.TestCase):
         # appears inside it before the dedent. The actor's watchdog
         # waits use ``self._stop_event.wait(...)`` (not time.sleep) and
         # that wait is intentionally outside any coord lock.
-        with_lock_re = re.compile(r"^(\s*)with\s+(?:self|coord(?:inator)?|self\._kernel)\._lock\s*:")
+        with_lock_re = re.compile(
+            r"^(\s*)with\s+(?:self|coord(?:inator)?|self\._kernel)\._lock\s*:"
+        )
         sleep_re = re.compile(r"\btime\.sleep\s*\(")
         violations: list[tuple[str, int, str]] = []
         for path in _python_files(_LOOM_KERNEL_DIR):

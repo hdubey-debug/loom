@@ -9,7 +9,7 @@ _Race-free turn taking. Pluggable policies. Bring your own LLM SDK._
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-1170%2B-success)](#)
+[![Tests](https://img.shields.io/badge/tests-1500%2B-success)](#)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hdubey-debug/loom/blob/main/examples/colab_demo.ipynb)
 
 </div>
@@ -34,7 +34,7 @@ agents wake at once, mention parsing that quietly drops valid
 addresses, and policy logic tangled with bus posting until nothing is
 safe to change. Loom makes those three things the kernel's job and
 gives policies one tiny pure callback (`plan_user_turn`). The result:
-~5k LOC, 1170+ tests, and a public surface you can read in an hour.
+~5k LOC, 1500+ tests, and a public surface you can read in an hour.
 
 | | Loom | LangGraph | AutoGen | crewAI |
 |---|---|---|---|---|
@@ -300,11 +300,12 @@ Both files are written for audit + tooling-grade replay
 in tests). **Automatic restart-recovery wiring is still pending** —
 `build_loom_session` constructs a fresh `RoomState` and does not call
 the recovery helpers; the journal is purely an audit log at runtime.
-Auto-restore wiring is on the v0.3 list.
+Auto-restore wiring is on the v0.4 list.
 
-**Snapshot schema is at v5** as of v0.2; older v3/v4 snapshots load
-cleanly with the retired `floor_owner` and `turn_taking_mode` fields
-silently discarded.
+**Snapshot schema is at v7** as of v0.3.x (envelope wraps room +
+capabilities + budget + actors + context slots). Older v3–v6 snapshots
+load cleanly through registered migrators; retired fields like
+`floor_owner` and `turn_taking_mode` are silently discarded.
 
 **Policy state is not journaled in v0** — restart instantiates a
 fresh policy. Stateful policies (debate phase, 20Q question count)
@@ -349,14 +350,14 @@ implementation detail and may shift between minor versions.
 
 - No async / off-lock policies. `plan_user_turn` runs under the
   coordinator's lock with a <10ms contract; an LLM-backed policy
-  would freeze every actor thread. On the v0.3 list.
+  would freeze every actor thread. On the v0.4 list.
 - No policy state persistence across restart. Stateful policies
   (debate phase, 20-questions count) work in-process but reset on
   restart.
 - No automatic restart-recovery from the journal. `events.jsonl`
   and `room_state.json` are written but `build_loom_session` does
   not currently call `replay_into` / `restore_state` on startup.
-  Deferred from v0.2 to v0.3.
+  On the v0.4 list.
 - Stream deltas are flushed during the streaming loop, before the
   post-stream chair-speak / idle-dup filters and the
   `should_post_response` policy veto run. UI renderers should clear
@@ -367,7 +368,8 @@ implementation detail and may shift between minor versions.
   facade doesn't expose them yet.
 - No structured `tool_call` / `tool_result` event kinds. Agents that
   use tools today do so inside their own adapter; Loom sees only the
-  final text. Tool-event support is on the v0.4 list.
+  final text. Tool-event support is on the v0.4 list
+  (`KernelState.tools` slot already reserved).
 - No standalone PyPI package. Install in-place from source.
 
 **Resolved in v0.2** (from the prior limits list): `RoomStateView` is
@@ -415,7 +417,32 @@ python examples/two_agents.py
 - Bus subscriber fan-out runs outside the bus lock — slow
   subscribers no longer block readers/writers.
 
-**v0.3 — next** (in planning):
+**v0.3 — landed** (kernel doctrine — 22 principles; see
+`docs/internal/study/` for the full design dialogue and
+`CHANGELOG.md` for the PR list):
+
+- **One unified `Lease` abstraction** with `LeaseKind` discriminator
+  (USER_TURN, REACTIVE, CONTROL_ACTION, TOOL_INVOCATION,
+  WORKFLOW_STEP, SUMMARIZATION). Lease-check chain gates each kind
+  via per-check `applies_to` filtering.
+- **Capabilities** — a typed capability registry (`CapabilityName`
+  enum with 33 verbs) with grant/revoke/expire effects. User-issued
+  control actions bypass the agent capability gate per design.
+- **Control actions** — every kernel state mutation goes through a
+  registered `ControlAction` → versioned `ControlEffect` →
+  registered reducer pipeline. Replay is deterministic.
+- **Floor overrides** — `ADD`/`REPLACE`/`BLOCK` modes scoped to one
+  lease, current turn, until-cleared, or persistent.
+- **Context compaction** — view-layer rolling summarisation with a
+  dedicated `SUMMARIZATION` lease, three typed events
+  (`summary_proposed`/`committed`/`failed`), off-lock pre-validation
+  + under-lock anchor commit, lineage edges, per-scope backoff, and
+  policy-pressure (Path A) or `/summarize` (Path B) triggers.
+- **Slash commands** — `/grant`, `/revoke`, `/topic`, `/anchor`,
+  `/responder`, `/floor`, `/policy`, `/summarize` as the
+  human-root-action surface (P15).
+
+**v0.4 — next** (in planning):
 
 - Controller mechanism: `RoomConfig.controller_ids` — chat events from
   privileged participants open chained user turns. The CEO /
@@ -424,12 +451,9 @@ python examples/two_agents.py
   routing).
 - Automatic restart-recovery wiring from the journal.
 - Policy-state snapshot/restore lifecycle hooks.
-
-**v0.4 — after** (sketched):
-
 - Structured `tool_call` / `tool_result` event kinds, tool channel
   visibility, multi-step streaming loop, tools-as-participants
-  pattern.
+  pattern. (`KernelState.tools` slot already reserved.)
 
 **v0.5 — exploratory:** `ClaudeCodeAgent` adapter + worktree-isolation
 convention for multi-Claude-Code orchestration under a CEO.

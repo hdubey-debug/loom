@@ -52,8 +52,7 @@ class CausalityTypes(unittest.TestCase):
     def test_causal_relation_is_str_enum(self):
         # Subclassing str means equality interops with raw strings.
         self.assertEqual(CausalRelation.RESPONDS_TO, "responds_to")
-        self.assertEqual(CausalRelation.CONTROL_ACTION_APPLIED.value,
-                         "control_action_applied")
+        self.assertEqual(CausalRelation.CONTROL_ACTION_APPLIED.value, "control_action_applied")
 
     def test_causal_relation_has_seven_members(self):
         # PR 4 ships the seven predicates listed in doctrine §8.
@@ -82,13 +81,17 @@ class CausalityTypes(unittest.TestCase):
     def test_causal_ref_unknown_relation_raises(self):
         with self.assertRaises(ValueError):
             CausalRef.from_jsonable(
-                {"ref": {"room_id": "r1", "event_id": 1, "event_type": "chat"},
-                 "relation": "made_up_predicate"}
+                {
+                    "ref": {"room_id": "r1", "event_id": 1, "event_type": "chat"},
+                    "relation": "made_up_predicate",
+                }
             )
 
     def test_coerce_causal_refs_passthrough_and_dict_list(self):
-        ref_dict = {"ref": {"room_id": "r1", "event_id": 1, "event_type": "chat"},
-                    "relation": "responds_to"}
+        ref_dict = {
+            "ref": {"room_id": "r1", "event_id": 1, "event_type": "chat"},
+            "relation": "responds_to",
+        }
         typed = CausalRef(
             ref=EventRef(room_id="r1", event_id=1, event_type="chat"),
             relation=CausalRelation.RESPONDS_TO,
@@ -244,8 +247,10 @@ class EnvelopeIntegration(unittest.TestCase):
                 "id": 0,
                 "ts": 1.0,
                 "causal_refs": [
-                    {"ref": {"room_id": "r1", "event_id": 1, "event_type": "chat"},
-                     "relation": "made_up"},
+                    {
+                        "ref": {"room_id": "r1", "event_id": 1, "event_type": "chat"},
+                        "relation": "made_up",
+                    },
                 ],
             }
         )

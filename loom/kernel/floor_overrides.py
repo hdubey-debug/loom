@@ -42,7 +42,7 @@ helpers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Optional
 
@@ -137,7 +137,7 @@ def _ensure_overrides_slot(state: KernelState) -> list:
         # Inject the attribute on the live instance. Using object.__setattr__
         # to bypass dataclass __setattr__ guards on frozen-ish containers.
         object.__setattr__(ctrl, "active_overrides", [])
-    return ctrl.active_overrides
+    return ctrl.active_overrides  # type: ignore[attr-defined]
 
 
 def _apply_floor_override(state: KernelState, effect: ControlEffect) -> None:
@@ -176,7 +176,8 @@ def prune_overrides_for_lease(state: KernelState, lease_id: int) -> int:
     overrides = _ensure_overrides_slot(state)
     before = len(overrides)
     overrides[:] = [
-        ov for ov in overrides
+        ov
+        for ov in overrides
         if not (ov.scope == FloorOverrideScope.ONE_LEASE and ov.lease_id == lease_id)
     ]
     return before - len(overrides)
@@ -187,7 +188,8 @@ def prune_overrides_for_turn(state: KernelState, turn_id: int) -> int:
     overrides = _ensure_overrides_slot(state)
     before = len(overrides)
     overrides[:] = [
-        ov for ov in overrides
+        ov
+        for ov in overrides
         if not (ov.scope == FloorOverrideScope.CURRENT_TURN and ov.turn_id == turn_id)
     ]
     return before - len(overrides)

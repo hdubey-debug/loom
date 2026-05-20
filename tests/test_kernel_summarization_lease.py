@@ -10,11 +10,10 @@ import unittest
 
 from loom.kernel import events as ev
 from loom.kernel.bus import MessageBus
-from loom.kernel.capabilities import CapabilityGrant, CapabilityName, CapabilityState
+from loom.kernel.capabilities import CapabilityGrant, CapabilityName
 from loom.kernel.context import ContextScope, SummaryRecord
 from loom.kernel.coordinator import RoomCoordinator, SchedulingResult
 from loom.kernel.effects import (
-    CompactionDisabledEffect,
     DefaultSummarizerSetEffect,
 )
 from loom.kernel.leases import (
@@ -106,14 +105,10 @@ class SchedulePathA(unittest.TestCase):
         coord = _coord_with_summarizer(20)
         scope = ContextScope(room_id="main")
         before = len(coord.bus.snapshot())
-        result = coord.schedule_summarization(
-            scope, trigger_pressure_ratio=0.85
-        )
+        result = coord.schedule_summarization(scope, trigger_pressure_ratio=0.85)
         self.assertTrue(result.scheduled, msg=f"reason={result.denial_reason!r}")
         self.assertEqual(result.summarizer_id, "loom")
-        emitted = [
-            ev.control_type_of(e) for e in coord.bus.snapshot()[before:]
-        ]
+        emitted = [ev.control_type_of(e) for e in coord.bus.snapshot()[before:]]
         self.assertIn("summarization_scheduled", emitted)
 
     def test_path_a_rejects_without_default_summarizer(self):
@@ -129,9 +124,7 @@ class SchedulePathA(unittest.TestCase):
         coord = _coord_with_summarizer(20)
         scope = ContextScope(room_id="main")
         # Manually mark scope disabled.
-        coord.kernel_state.context.disabled_scopes.add(
-            ("loom", scope.as_tuple())
-        )
+        coord.kernel_state.context.disabled_scopes.add(("loom", scope.as_tuple()))
         result = coord.schedule_summarization(scope)
         self.assertFalse(result.scheduled)
         self.assertEqual(result.denial_reason, "scope_disabled")
@@ -155,17 +148,13 @@ class RequestPathB(unittest.TestCase):
 
     def test_path_b_denied_without_summarize_cap(self):
         coord = _coord_with_summarizer(20, grant_summarize=False)
-        result = coord.request_summarization(
-            "claude_code", ContextScope(room_id="main")
-        )
+        result = coord.request_summarization("claude_code", ContextScope(room_id="main"))
         self.assertFalse(result.scheduled)
 
     def test_path_b_user_bypasses_capability_check(self):
         # P15: holder == "user" skips _CapabilityCheck.
         coord = _coord_with_summarizer(20, grant_summarize=False)
-        result = coord.request_summarization(
-            "user", ContextScope(room_id="main")
-        )
+        result = coord.request_summarization("user", ContextScope(room_id="main"))
         # P15 capability bypass applies; participant_registered may
         # still reject because "user" isn't a participant — that's
         # the next gate to clear in v0.4. For now we accept either
@@ -191,9 +180,7 @@ class BackoffAndDisablement(unittest.TestCase):
         before = len(coord.bus.snapshot())
         for i in range(2):
             coord.submit_summary_proposed(self._bad_record(f"s{i}"))
-        emitted = [
-            ev.control_type_of(e) for e in coord.bus.snapshot()[before:]
-        ]
+        emitted = [ev.control_type_of(e) for e in coord.bus.snapshot()[before:]]
         self.assertIn("compaction_disabled", emitted)
         scope = ContextScope(room_id="main")
         self.assertIn(
@@ -244,26 +231,18 @@ class BackoffAndDisablement(unittest.TestCase):
             summarizer_id="loom",
         )
         self.assertTrue(coord.submit_summary_proposed(good).committed)
-        self.assertEqual(
-            coord.kernel_state.context.failure_count.get(key, 0), 0
-        )
+        self.assertEqual(coord.kernel_state.context.failure_count.get(key, 0), 0)
 
     def test_default_summarizer_change_clears_backoff_state(self):
         coord = _coord_with_summarizer(20, threshold=10)
         scope = ContextScope(room_id="main")
         # Pre-populate failure_count + disabled_scopes for the OLD slot.
-        coord.kernel_state.context.failure_count[
-            ("loom", scope.as_tuple())
-        ] = 5
-        coord.kernel_state.context.disabled_scopes.add(
-            ("loom", scope.as_tuple())
-        )
+        coord.kernel_state.context.failure_count[("loom", scope.as_tuple())] = 5
+        coord.kernel_state.context.disabled_scopes.add(("loom", scope.as_tuple()))
         # Change the default summariser via the reducer; the state
         # mutator clears entries for "loom".
         with coord._lock:
-            coord._apply_effect(
-                DefaultSummarizerSetEffect(participant_id="claude_code")
-            )
+            coord._apply_effect(DefaultSummarizerSetEffect(participant_id="claude_code"))
         self.assertNotIn(
             ("loom", scope.as_tuple()),
             coord.kernel_state.context.failure_count,
@@ -286,6 +265,7 @@ class SlashSummarize(unittest.TestCase):
 
     def test_slash_summarize_parses_thread_param(self):
         from loom.slash_commands import parse_slash_command
+
         parsed = parse_slash_command("/summarize thread=debate-1")
         self.assertEqual(parsed.action_name, "SUMMARIZE")
         self.assertEqual(parsed.params.get("thread_id"), "debate-1")

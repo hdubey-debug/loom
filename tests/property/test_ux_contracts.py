@@ -38,23 +38,25 @@ def _iter_python_files(root: Path) -> list[Path]:
 def test_actor_id_appears_only_in_kernel_actor_module():
     """``actor_id`` is reserved for the per-thread runtime in
     ``loom/kernel/actor.py``. User-facing surfaces use ``participant_id``.
+
+    v0.3.x context-compaction added ``ContextScope.actor_id`` as a
+    legitimate per-actor summary-scope axis (doctrine P22 / study/14
+    §6); the canonical owner is ``loom/kernel/context.py`` plus the
+    scope-serialization seams that forward it through unchanged.
     """
+    # Files where ``actor_id`` is the canonical name (kernel-internal
+    # threading or ContextScope-owned summary-scope axis).
+    allowed_files = {
+        "kernel/actor.py",  # per-thread runtime binding.
+        "kernel/bus.py",  # bind_actor seam — kernel-internal.
+        "kernel/prompt.py",  # internal render helpers (audit P2.4).
+        "kernel/context.py",  # v0.3.x ContextScope owner.
+        "slash_commands.py",  # /summarize actor=<id> forwards to scope.
+    }
     offenders: list[str] = []
     for path in _iter_python_files(_LOOM_DIR):
         rel = path.relative_to(_LOOM_DIR)
-        # Allow the threading-runtime module itself.
-        if rel.as_posix() == "kernel/actor.py":
-            continue
-        # The bus's bind_actor seam takes an actor_id parameter — that is
-        # a kernel-internal threading binding, not a user-facing API.
-        if rel.as_posix() == "kernel/bus.py":
-            continue
-        # The prompt module's internal helpers use actor_id as the
-        # rendering target id; the *public* policy methods (system_prompt
-        # / role_prompt) in this module use participant_id (audit P2.4).
-        # Skip the file as a whole because the internal helpers are
-        # documented as kernel-internal in the module docstring.
-        if rel.as_posix() == "kernel/prompt.py":
+        if rel.as_posix() in allowed_files:
             continue
         text = path.read_text(encoding="utf-8")
         in_docstring = False
@@ -72,7 +74,16 @@ def test_actor_id_appears_only_in_kernel_actor_module():
             # Skip lines that contain ``actor_id`` only inside a
             # backtick-quoted reference (prose) — these are common in
             # comments left to flag a name change.
-            if re.search(r"\bactor_id\b", line) and not re.search(r"`+actor_id`+", line):
+            if re.search(r"`+actor_id`+", line):
+                continue
+            # Skip ContextScope-serialization seams: lines where
+            # ``actor_id`` is a dict key / getattr target on a ``scope``
+            # variable (events.py ``_scope_payload`` helper).
+            if re.search(r"\bactor_id\b", line) and re.search(
+                r"scope[\.\[\(]|\"actor_id\"\s*:|getattr\(scope", line
+            ):
+                continue
+            if re.search(r"\bactor_id\b", line):
                 offenders.append(f"{rel}:{line_no}: {stripped}")
     assert not offenders, (
         "``actor_id`` leaked into a user-facing surface — rename to "

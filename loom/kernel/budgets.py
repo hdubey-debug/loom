@@ -176,9 +176,7 @@ class BudgetLedger:
         ``amount`` exceeds the remaining headroom.
         """
         if lease_id in self.reservations:
-            raise ValueError(
-                f"lease_id {lease_id} already has a reservation"
-            )
+            raise ValueError(f"lease_id {lease_id} already has a reservation")
         if not self.can_reserve(scope, amount):
             raise ValueError(
                 f"reservation of {amount} would exceed limit "
@@ -208,9 +206,7 @@ class BudgetLedger:
         if r is None:
             raise KeyError(f"no reservation for lease {lease_id}")
         if actual > r.amount:
-            raise ValueError(
-                f"commit {actual} exceeds reservation {r.amount}"
-            )
+            raise ValueError(f"commit {actual} exceeds reservation {r.amount}")
         self.commits[r.scope] = self.commits.get(r.scope, 0.0) + actual
         return r, actual
 
@@ -250,9 +246,7 @@ class BudgetLedger:
         if r is None:
             raise KeyError(f"no reservation for lease {lease_id}")
         if actual_used > r.amount:
-            raise ValueError(
-                f"committed {actual_used} exceeds reservation {r.amount}"
-            )
+            raise ValueError(f"committed {actual_used} exceeds reservation {r.amount}")
         refunded = r.amount - actual_used
         self.commits[r.scope] = self.commits.get(r.scope, 0.0) + actual_used
         self.refunds[r.scope] = self.refunds.get(r.scope, 0.0) + refunded

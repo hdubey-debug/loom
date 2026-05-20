@@ -28,7 +28,6 @@ from loom.kernel.events import (
     Event,
     plane_of,
 )
-from loom.kernel.leases import LeaseKind, UserTurnContext
 from loom.kernel.room import ParticipantInfo, RoomConfig, RoomState
 
 
@@ -64,6 +63,7 @@ class EventPlaneClassification(unittest.TestCase):
     def test_summary_event_is_conversation_plane(self):
         # Summary is content, not control.
         from loom.kernel.events import Event as _Event
+
         e = _Event(kind="summary", sender="system", body="recap")
         self.assertEqual(plane_of(e), EventPlane.CONVERSATION)
 
@@ -105,13 +105,20 @@ class ControlActionEvents(unittest.TestCase):
         self.assertEqual(e.body["check_name"], "capability")
 
     def test_validator_rejects_missing_action_name(self):
-        line = json.dumps({
-            "kind": "control",
-            "sender": "system",
-            "body": {"control_type": "control_action_proposed", "proposer_id": "loom"},
-            "channel": "main", "addressees": [], "room_epoch": 0,
-            "user_turn_id": None, "meta": {}, "id": 0, "ts": 1.0,
-        })
+        line = json.dumps(
+            {
+                "kind": "control",
+                "sender": "system",
+                "body": {"control_type": "control_action_proposed", "proposer_id": "loom"},
+                "channel": "main",
+                "addressees": [],
+                "room_epoch": 0,
+                "user_turn_id": None,
+                "meta": {},
+                "id": 0,
+                "ts": 1.0,
+            }
+        )
         with self.assertRaises(EventShapeError):
             Event.from_jsonl(line)
 
@@ -138,8 +145,14 @@ class LeaseClosedUnification(unittest.TestCase):
         self.assertEqual(loaded.body["span_id"], "abc")
 
     def test_lease_closed_each_reason_validates(self):
-        for reason in ("released", "denied", "expired", "cancelled",
-                       "aborted", "aborted_validation"):
+        for reason in (
+            "released",
+            "denied",
+            "expired",
+            "cancelled",
+            "aborted",
+            "aborted_validation",
+        ):
             e = ev.lease_closed(lease_id=1, holder="loom", kind="user_turn", reason=reason)
             e.id, e.ts = 0, 0.0
             Event.from_jsonl(e.to_jsonl())  # must not raise
@@ -167,16 +180,15 @@ class LeaseClosedUnification(unittest.TestCase):
         coord.register_participant(ParticipantInfo(id="loom"))
         # Open a user turn so acquire_lease can succeed.
         from loom.kernel.obligations import plan_for_default
+
         user_event = ev.chat(sender="user", body="hello")
         coord.bus.post(user_event)
-        plan = plan_for_default("loom", reason="test",
-                                target_event_ids=[user_event.id])
+        plan = plan_for_default("loom", reason="test", target_event_ids=[user_event.id])
         coord.open_user_turn(user_event, plan)
         lease = coord.acquire_lease(holder="loom", trigger_event_id=user_event.id)
         self.assertIsNotNone(lease)
         coord.release_lease(lease)
-        closed = [x for x in coord.bus.snapshot()
-                  if ev.control_type_of(x) == "lease_closed"]
+        closed = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_closed"]
         self.assertEqual(len(closed), 1)
         self.assertEqual(closed[0].body["reason"], "released")
         self.assertEqual(closed[0].body["holder"], "loom")
@@ -186,23 +198,21 @@ class LeaseClosedUnification(unittest.TestCase):
         coord = self._coord()
         coord.register_participant(ParticipantInfo(id="loom"))
         from loom.kernel.obligations import plan_for_default
+
         user_event = ev.chat(sender="user", body="hello")
         coord.bus.post(user_event)
-        plan = plan_for_default("loom", reason="test",
-                                target_event_ids=[user_event.id])
+        plan = plan_for_default("loom", reason="test", target_event_ids=[user_event.id])
         coord.open_user_turn(user_event, plan)
         lease = coord.acquire_lease(holder="loom", trigger_event_id=user_event.id)
         self.assertIsNotNone(lease)
         # Force expiry by passing a far-future cutoff.
         n = coord.check_lease_ttl(now=lease.expires_at + 1.0)
         self.assertEqual(n, 1)
-        closed = [x for x in coord.bus.snapshot()
-                  if ev.control_type_of(x) == "lease_closed"]
+        closed = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_closed"]
         self.assertEqual(len(closed), 1)
         self.assertEqual(closed[0].body["reason"], "expired")
         # Both legacy and new fire.
-        expired = [x for x in coord.bus.snapshot()
-                   if ev.control_type_of(x) == "lease_expired"]
+        expired = [x for x in coord.bus.snapshot() if ev.control_type_of(x) == "lease_expired"]
         self.assertEqual(len(expired), 1)
 
 

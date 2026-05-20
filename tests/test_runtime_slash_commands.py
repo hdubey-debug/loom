@@ -14,7 +14,6 @@ from loom.kernel.room import ParticipantInfo, RoomConfig, RoomState
 from loom.slash_commands import (
     ParsedCommand,
     SlashCommandError,
-    SlashCommandRegistry,
     build_default_registry,
     dispatch_slash_command,
     is_slash_command,
@@ -71,9 +70,7 @@ class Parser(unittest.TestCase):
         self.assertIsNone(p.params["expires_at"])
 
     def test_grant_with_expires(self):
-        p = parse_slash_command(
-            "/grant claude_code SET_TOPIC expires_in=120"
-        )
+        p = parse_slash_command("/grant claude_code SET_TOPIC expires_in=120")
         self.assertEqual(p.params["expires_at"], 120.0)
 
     def test_revoke_parse(self):
@@ -112,8 +109,9 @@ class RoutingThroughKernel(unittest.TestCase):
         self.assertTrue(result.granted)
         self.assertEqual(coord.state.topic, "hello")
         # Same control_action_applied shape as an agent dispatch.
-        applied = [x for x in coord.bus.snapshot()
-                   if ev.control_type_of(x) == "control_action_applied"]
+        applied = [
+            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "control_action_applied"
+        ]
         self.assertEqual(len(applied), 1)
         self.assertEqual(applied[0].body["applier_id"], "user")
         self.assertEqual(applied[0].body["action_name"], "SET_TOPIC")
@@ -137,17 +135,19 @@ class RoutingThroughKernel(unittest.TestCase):
         with self.assertRaises(SlashCommandError):
             dispatch_slash_command(coord, "/nothere")
         # No control_action events emitted.
-        events = [x for x in coord.bus.snapshot()
-                  if ev.control_type_of(x) in (
-                      "control_action_proposed", "control_action_applied"
-                  )]
+        events = [
+            x
+            for x in coord.bus.snapshot()
+            if ev.control_type_of(x) in ("control_action_proposed", "control_action_applied")
+        ]
         self.assertEqual(events, [])
 
     def test_user_action_journaled_as_user(self):
         coord = _coord()
         dispatch_slash_command(coord, "/topic foo")
-        proposed = [x for x in coord.bus.snapshot()
-                    if ev.control_type_of(x) == "control_action_proposed"]
+        proposed = [
+            x for x in coord.bus.snapshot() if ev.control_type_of(x) == "control_action_proposed"
+        ]
         self.assertEqual(proposed[0].body["proposer_id"], "user")
 
 

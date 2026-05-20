@@ -74,8 +74,6 @@ from loom.kernel.control_actions import (
 )
 from loom.kernel.floor_overrides import (
     FLOOR_OVERRIDE_ACTIONS,
-    prune_overrides_for_lease,
-    prune_overrides_for_turn,
     register_floor_override_reducer,
 )
 from loom.kernel.causality import TraceContext, child_span, new_trace
@@ -85,7 +83,6 @@ from loom.kernel.leases import (
     Lease,
     LeaseContext,
     LeaseKind,
-    ReactiveContext,
     SummarizationContext,
     UserTurnContext,
     check_applies_to,
@@ -567,6 +564,7 @@ class _CapabilityCheck:
             return PASSED
         ctx = getattr(coordinator, "_pending_lease_context", None)
         from loom.kernel.leases import SummarizationContext
+
         if not isinstance(ctx, (ControlActionContext, SummarizationContext)):
             # Defensive: PR 7 always sets the context before invoking
             # the check chain for a typed lease. Missing context means
@@ -575,9 +573,11 @@ class _CapabilityCheck:
             return PASSED
         # v0.3 PR 9: the context carries the action's
         # ``required_capability`` directly. Fall back to a name→enum
-        # match (legacy bare-context tests) when absent.
+        # match (legacy bare-context tests) when absent — only applies
+        # to ``ControlActionContext`` since ``SummarizationContext``
+        # always sets ``required_capability`` explicitly.
         cap_value = ctx.required_capability
-        if cap_value is None:
+        if cap_value is None and isinstance(ctx, ControlActionContext):
             cap_value = ctx.action_name
         try:
             cap = CapabilityName(cap_value)
@@ -615,6 +615,7 @@ class _SummarizerSlotCheck:
         del trigger_event_id, is_direct_mention
         ctx = getattr(coordinator, "_pending_lease_context", None)
         from loom.kernel.leases import SummarizationContext
+
         if not isinstance(ctx, SummarizationContext):
             return PASSED
         if ctx.triggered_by != "policy":
@@ -724,8 +725,8 @@ class RoomCoordinator:
         # (v0.3 reserves the config field; pre-v0.3 RoomConfig
         # instances pass an empty tuple via ``getattr``).
         customs = tuple(getattr(self.config, "custom_control_actions", ()) or ())
-        self._action_registry: ControlActionRegistry = (
-            build_kernel_action_registry(FLOOR_OVERRIDE_ACTIONS + customs)
+        self._action_registry: ControlActionRegistry = build_kernel_action_registry(
+            FLOOR_OVERRIDE_ACTIONS + customs
         )
         # v0.3 PR 10 (doctrine §10): wire the FloorOverrideEffect
         # reducer onto the same registry the slot setters use.
@@ -922,7 +923,8 @@ class RoomCoordinator:
         action = self._action_registry.get(action_name)
         if action is None:
             return self._deny_control_action(
-                action_name, proposer_id,
+                action_name,
+                proposer_id,
                 DenialReason.UNKNOWN_ACTION,
                 f"unknown action: {action_name!r}",
             )
@@ -930,7 +932,8 @@ class RoomCoordinator:
         ok, why = action.validate_params(params)
         if not ok:
             return self._deny_control_action(
-                action_name, proposer_id,
+                action_name,
+                proposer_id,
                 DenialReason.INVALID_PARAMS,
                 why or "invalid params",
             )
@@ -941,12 +944,11 @@ class RoomCoordinator:
             params=(),
             required_capability=action.required_capability.value,
         )
-        lease = self.acquire_typed_lease(
-            LeaseKind.CONTROL_ACTION, proposer_id, ctx
-        )
+        lease = self.acquire_typed_lease(LeaseKind.CONTROL_ACTION, proposer_id, ctx)
         if lease is None:
             return self._deny_control_action(
-                action_name, proposer_id,
+                action_name,
+                proposer_id,
                 DenialReason.INSUFFICIENT_CAPABILITY,
                 "lease denied",
                 check_name="capability",
@@ -959,7 +961,8 @@ class RoomCoordinator:
         except Exception as exc:
             self._release_typed_lease(lease.id)
             return self._deny_control_action(
-                action_name, proposer_id,
+                action_name,
+                proposer_id,
                 DenialReason.CHECK_RAISED,
                 f"{type(exc).__name__}: {exc}",
             )
@@ -973,7 +976,8 @@ class RoomCoordinator:
         except Exception as exc:
             self._release_typed_lease(lease.id)
             return self._deny_control_action(
-                action_name, proposer_id,
+                action_name,
+                proposer_id,
                 DenialReason.CHECK_RAISED,
                 f"{type(exc).__name__}: {exc}",
             )
@@ -981,8 +985,7 @@ class RoomCoordinator:
         self._release_typed_lease(lease.id)
 
         summary = [
-            {"effect_type": e.effect_type, "schema_version": e.schema_version}
-            for e in applied
+            {"effect_type": e.effect_type, "schema_version": e.schema_version} for e in applied
         ]
         self.bus.post_internal(
             ev.control_action_applied(
@@ -1011,9 +1014,7 @@ class RoomCoordinator:
             ),
             auth=_KERNEL_AUTH,
         )
-        return ControlActionResult(
-            granted=False, reason=reason, message=message
-        )
+        return ControlActionResult(granted=False, reason=reason, message=message)
 
     def _release_typed_lease(self, lease_id: int) -> None:
         """v0.3 PR 7+8 — release a typed lease and emit `lease_closed`."""
@@ -1160,18 +1161,14 @@ class RoomCoordinator:
             # Anchor check: the record's input_summary_ids must include
             # whatever is currently in active_summary_by_scope[scope]
             # (or the slot must be empty if the record has no inputs).
-            active = self.kernel_state.context.active_summary_by_scope.get(
-                record.scope
-            )
+            active = self.kernel_state.context.active_summary_by_scope.get(record.scope)
             anchor_ok: bool
             if active is None:
                 # First summary for this scope — only OK if the record
                 # has no input summaries (otherwise it claims to extend
                 # a non-existent prior).
                 anchor_ok = len(record.input_summary_ids) == 0
-                anchor_detail = (
-                    "active_summary_by_scope empty but record has input_summary_ids"
-                )
+                anchor_detail = "active_summary_by_scope empty but record has input_summary_ids"
             else:
                 anchor_ok = active in record.input_summary_ids
                 anchor_detail = (
@@ -1283,10 +1280,9 @@ class RoomCoordinator:
         # Default the covers range to the rolling tail.
         if covers_event_range is None:
             from loom.kernel.context import select_compaction_range
+
             bus_length = len(self.bus.snapshot())
-            covers_event_range = select_compaction_range(
-                ctx_state, scope, bus_length=bus_length
-            )
+            covers_event_range = select_compaction_range(ctx_state, scope, bus_length=bus_length)
 
         context = SummarizationContext(
             scope=scope,
@@ -1362,6 +1358,7 @@ class RoomCoordinator:
 
         if covers_event_range is None:
             from loom.kernel.context import select_compaction_range
+
             bus_length = len(self.bus.snapshot())
             covers_event_range = select_compaction_range(
                 self.kernel_state.context, scope, bus_length=bus_length
@@ -1424,9 +1421,7 @@ class RoomCoordinator:
         if key in self.kernel_state.context.disabled_scopes:
             return
         count = self.kernel_state.context.failure_count.get(key, 0)
-        threshold = getattr(
-            self.config, "summarizer_max_consecutive_failures", 3
-        )
+        threshold = getattr(self.config, "summarizer_max_consecutive_failures", 3)
         if count < threshold:
             return
         self._emit_system(
@@ -1833,9 +1828,7 @@ class RoomCoordinator:
             # filtered mapping so the no-op short-circuit can run
             # against the canonical "what set_roles would write" value
             # without applying the effect twice.
-            filtered = {
-                pid: role for pid, role in roles.items() if pid in self.state.participants
-            }
+            filtered = {pid: role for pid, role in roles.items() if pid in self.state.participants}
             if filtered == old:
                 return
             self._apply_effect(RolesAssignedEffect(roles=filtered))
@@ -1973,8 +1966,7 @@ class RoomCoordinator:
         # ``_POLICY_SLOW_THRESHOLD_MS``; v0.3 reads from config so
         # different policies can tune the observability noise floor.
         threshold = float(
-            getattr(self.config, "policy_slow_threshold_ms",
-                    _POLICY_SLOW_THRESHOLD_MS)
+            getattr(self.config, "policy_slow_threshold_ms", _POLICY_SLOW_THRESHOLD_MS)
         )
         if elapsed_ms > threshold:
             self.bus.post_internal(
@@ -2455,9 +2447,7 @@ class RoomCoordinator:
                 # parameters from the context and delegate. This avoids
                 # parallel maintenance burden for the dominant kind.
                 if not isinstance(context, UserTurnContext):
-                    raise TypeError(
-                        "USER_TURN lease requires UserTurnContext"
-                    )
+                    raise TypeError("USER_TURN lease requires UserTurnContext")
                 legacy = self._acquire_user_turn_lease_locked(
                     holder=holder,
                     trigger_event_id=context.trigger_event_id,
@@ -2494,18 +2484,14 @@ class RoomCoordinator:
                             coordinator=self,
                         )
                     except Exception as exc:
-                        result = LeaseCheckResult(
-                            False, f"check_raised:{type(exc).__name__}"
-                        )
+                        result = LeaseCheckResult(False, f"check_raised:{type(exc).__name__}")
                     if not result.passed:
                         self.bus.post_internal(
                             ev.lease_denied(
                                 holder=holder,
                                 check_name=chk.name,
                                 deny_reason=result.deny_reason or "denied",
-                                trigger_event_id=getattr(
-                                    context, "target_event_id", -1
-                                ) or -1,
+                                trigger_event_id=getattr(context, "target_event_id", -1) or -1,
                             ),
                             auth=_KERNEL_AUTH,
                         )

@@ -38,23 +38,17 @@ class ContextFieldsHaveThreadId(unittest.TestCase):
         self.assertEqual(c.thread_id, "main")
 
     def test_user_turn_context_explicit_thread(self):
-        c = UserTurnContext(
-            user_turn_id=1, trigger_event_id=0, room_epoch=0, thread_id="t9"
-        )
+        c = UserTurnContext(user_turn_id=1, trigger_event_id=0, room_epoch=0, thread_id="t9")
         self.assertEqual(c.thread_id, "t9")
 
     def test_control_action_context_default_thread(self):
-        self.assertEqual(
-            ControlActionContext(action_name="SET_TOPIC").thread_id, "main"
-        )
+        self.assertEqual(ControlActionContext(action_name="SET_TOPIC").thread_id, "main")
 
     def test_tool_invocation_context_default_thread(self):
         self.assertEqual(ToolInvocationContext(tool_name="x").thread_id, "main")
 
     def test_workflow_step_context_default_thread(self):
-        self.assertEqual(
-            WorkflowStepContext(workflow_id="w", step_id="s").thread_id, "main"
-        )
+        self.assertEqual(WorkflowStepContext(workflow_id="w", step_id="s").thread_id, "main")
 
     def test_reactive_context_default_thread(self):
         self.assertEqual(ReactiveContext(reason="r").thread_id, "main")

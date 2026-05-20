@@ -184,11 +184,13 @@ class TestSnapshotAccuracy:
         room.stop(timeout=10.0)
         snap = Journal(journal_dir).load_state()
         assert snap is not None
-        assert snap.get("topic") == "snapshot-topic"
-        assert snap.get("anchor_id") == "sn0"
-        assert snap.get("default_responder_id") == "sn0"
+        # v0.3 PR 1 nests room fields under "room" in the snapshot envelope.
+        room_snap = snap.get("room") or snap
+        assert room_snap.get("topic") == "snapshot-topic"
+        assert room_snap.get("anchor_id") == "sn0"
+        assert room_snap.get("default_responder_id") == "sn0"
         # Participants list reflects the room.
-        pids = sorted(p["id"] for p in snap.get("participants", []))
+        pids = sorted(p["id"] for p in room_snap.get("participants", []))
         assert pids == ["sn0", "sn1"]
 
     @pytest.mark.disk
@@ -213,7 +215,8 @@ class TestSnapshotAccuracy:
         assert restored is not None
         # The snapshot's round-robin fields match live state at stop;
         # in v5 a non-empty ``turn_order`` is the round-robin signal.
-        ctl = restored.get("control") or {}
+        room_snap = restored.get("room") or restored
+        ctl = room_snap.get("control") or {}
         assert ctl.get("turn_order") == order
         assert ctl.get("next_speaker_idx") == pre_idx
         # The new room's restored RoomState (constructed by passing the
@@ -244,7 +247,8 @@ class TestSnapshotAccuracy:
         room.run_console(prompt_fn=script.prompt_fn, notify=script.notify)
         snap = Journal(journal_dir).load_state()
         assert snap is not None
-        ctl = snap.get("control") or {}
+        room_snap = snap.get("room") or snap
+        ctl = room_snap.get("control") or {}
         assert ctl.get("roles") == {"rr0": "chair", "rr1": "member"}
         assert ctl.get("style") == "detailed"
         # restore_state rebuilds the same fields.

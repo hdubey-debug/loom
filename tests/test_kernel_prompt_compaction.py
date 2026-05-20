@@ -42,26 +42,20 @@ class RendersActiveSummary(unittest.TestCase):
         )
         result = coord.submit_summary_proposed(rec)
         self.assertTrue(result.committed, msg=f"reason={result.reason!r}")
-        prompt = build_prompt(
-            "claude_code", trigger_event=None, coordinator=coord
-        )
+        prompt = build_prompt("claude_code", trigger_event=None, coordinator=coord)
         self.assertIn("this is the canonical summary text", prompt)
         self.assertIn("<<<PRIOR ROOM SUMMARY (canonical compaction)>>>", prompt)
 
     def test_no_active_summary_omits_block(self):
         coord = _coord_with_chats(5)
-        prompt = build_prompt(
-            "claude_code", trigger_event=None, coordinator=coord
-        )
+        prompt = build_prompt("claude_code", trigger_event=None, coordinator=coord)
         self.assertNotIn("PRIOR ROOM SUMMARY", prompt)
 
     def test_legacy_summary_event_renders_when_no_active(self):
         # No ContextState entry; falls back to a posted summary event.
         coord = _coord_with_chats(5)
         coord.bus.post(ev.summary("legacy compaction text"))
-        prompt = build_prompt(
-            "claude_code", trigger_event=None, coordinator=coord
-        )
+        prompt = build_prompt("claude_code", trigger_event=None, coordinator=coord)
         self.assertIn("legacy compaction text", prompt)
 
     def test_active_summary_wins_over_legacy_event(self):
@@ -77,9 +71,7 @@ class RendersActiveSummary(unittest.TestCase):
             summarizer_id="loom",
         )
         coord.submit_summary_proposed(rec)
-        prompt = build_prompt(
-            "claude_code", trigger_event=None, coordinator=coord
-        )
+        prompt = build_prompt("claude_code", trigger_event=None, coordinator=coord)
         self.assertIn("canonical text", prompt)
         self.assertNotIn("legacy text", prompt)
 
@@ -92,14 +84,10 @@ class RoomConfigCompactionFields(unittest.TestCase):
         self.assertEqual(RoomConfig().context_pressure_threshold_ratio, 0.7)
 
     def test_pressure_check_interval_default(self):
-        self.assertEqual(
-            RoomConfig().context_pressure_check_interval_events, 10
-        )
+        self.assertEqual(RoomConfig().context_pressure_check_interval_events, 10)
 
     def test_max_consecutive_failures_default(self):
-        self.assertEqual(
-            RoomConfig().summarizer_max_consecutive_failures, 3
-        )
+        self.assertEqual(RoomConfig().summarizer_max_consecutive_failures, 3)
 
     def test_overrides_propagate(self):
         cfg = RoomConfig(

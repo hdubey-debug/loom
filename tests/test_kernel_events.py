@@ -364,8 +364,10 @@ class EventInvariants(unittest.TestCase):
             ev.lease_expired(holder="loom", lease_id=1, trigger_event_id=0),
             ev.policy_slow(elapsed_ms=137.0, threshold_ms=100.0, user_event_id=0),
             ev.policy_error(
-                exception_class="RuntimeError", message="boom",
-                elapsed_ms=1.0, user_event_id=0,
+                exception_class="RuntimeError",
+                message="boom",
+                elapsed_ms=1.0,
+                user_event_id=0,
             ),
             ev.stream_start(lease_id=1, participant_id="loom", trigger_event_id=0),
             ev.stream_delta(lease_id=1, participant_id="loom", text="x"),
@@ -454,9 +456,7 @@ class PolicyEventConstructors(unittest.TestCase):
         self.assertTrue(ev.is_known_control(e))
 
     def test_policy_slow_roundtrip(self):
-        original = ev.policy_slow(
-            elapsed_ms=137.456, threshold_ms=100.0, user_event_id=42
-        )
+        original = ev.policy_slow(elapsed_ms=137.456, threshold_ms=100.0, user_event_id=42)
         line = original.to_jsonl()
         restored = ev.Event.from_jsonl(line)
         self.assertEqual(restored, original)
@@ -491,8 +491,10 @@ class PolicyEventConstructors(unittest.TestCase):
 
     def test_policy_error_is_known_control(self):
         e = ev.policy_error(
-            exception_class="RuntimeError", message="boom",
-            elapsed_ms=1.0, user_event_id=0,
+            exception_class="RuntimeError",
+            message="boom",
+            elapsed_ms=1.0,
+            user_event_id=0,
         )
         self.assertTrue(ev.is_known_control(e))
 
@@ -581,21 +583,15 @@ class EventEnvelopeVersioning(unittest.TestCase):
         # Zero / negative / non-int schema_version is rejected via the
         # standard EventShapeError path so a tampered journal line
         # cannot install an unparseable envelope version.
-        bad_line = (
-            '{"kind":"chat","sender":"user","body":"hi","schema_version":0}'
-        )
+        bad_line = '{"kind":"chat","sender":"user","body":"hi","schema_version":0}'
         with self.assertRaises(ev.EventShapeError):
             ev.Event.from_jsonl(bad_line)
-        bad_line = (
-            '{"kind":"chat","sender":"user","body":"hi","schema_version":"v1"}'
-        )
+        bad_line = '{"kind":"chat","sender":"user","body":"hi","schema_version":"v1"}'
         with self.assertRaises(ev.EventShapeError):
             ev.Event.from_jsonl(bad_line)
 
     def test_invalid_causal_refs_rejected(self):
-        bad_line = (
-            '{"kind":"chat","sender":"user","body":"hi","causal_refs":"oops"}'
-        )
+        bad_line = '{"kind":"chat","sender":"user","body":"hi","causal_refs":"oops"}'
         with self.assertRaises(ev.EventShapeError):
             ev.Event.from_jsonl(bad_line)
 

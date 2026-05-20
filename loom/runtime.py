@@ -269,9 +269,7 @@ def build_loom_session(
         # runtime change. Synchronous shutdown still goes through
         # ``journal.snapshot(coord.kernel_state)`` directly in
         # :meth:`LoomSession.stop`.
-        journal.set_snapshot_due_callback(
-            lambda: Journal._state_to_dict(coord.kernel_state)
-        )
+        journal.set_snapshot_due_callback(lambda: Journal._state_to_dict(coord.kernel_state))
 
         # Surface write failures as a ``journal_error`` control event so
         # consumers can observe the degraded state. The journal's
